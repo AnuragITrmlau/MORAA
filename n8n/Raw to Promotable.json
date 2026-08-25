@@ -1,0 +1,1516 @@
+{
+  "name": "Raw to Promotable",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Upload the Image here",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "data",
+              "fieldType": "file",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Description",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -2096,
+        128
+      ],
+      "id": "a3215ba2-178c-40e7-943b-4439798ce4b6",
+      "name": "On form submission",
+      "webhookId": "a1d11a98-29bd-49b4-984e-d483d0d814b2"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "text": "You are an elite Product Design Engineer, Material Expert, and Strategic Marketing Specialist with deep expertise in product identification, industrial aesthetics, and the premium corporate gifting landscape. \n\nAnalyze the provided image thoroughly. Your ultimate goal is to evaluate the product across all required architectural and marketing dimensions.\n\nYou MUST respond strictly with a single, flat JSON object matching the schema below. Do not nest these fields inside arrays or sub-objects. Do not include any conversational filler, markdown formatting blocks (like ```json), or extra text outside the JSON structure.\n\nJSON Schema Required:\n{\n  \"Product Identity\": \"Exact identification and name of the product\",\n  \"Material Properties\": \"Analysis of wood/material type, grain, finish, and tactile quality\",\n  \"Scale and Proportion\": \"Perceived physical dimensions, weight balance, and ergonomic scaling\",\n  \"Design Style\": \"Visual design movement (e.g., Minimalist, Bauhaus, Contemporary, Rustic)\",\n  \"Visual Craftsmanship\": \"Evaluation of lines, joinery, structural symmetry, and premium execution\",\n  \"Target Demographic\": \"Primary user profiles, corporate professionals, or executive tiers\",\n  \"Psychographics\": \"Core values, lifestyle alignments, and purchasing motivations of the consumer\",\n  \"Functional Utility\": \"How the product performs its practical, day-to-day utilitarian tasks\",\n  \"Lifestyle Branding\": \"How the product serves as a status symbol, desk decor, or brand identity statement\",\n  \"Indian Festive Context\": \"Suitability and cultural alignment for major Indian festive seasons (e.g., Diwali, New Year, corporate milestones)\",\n  \"Market Readiness\": \"Perceived commercial viability, premium value quotient, and timelessness within the Indian corporate gifting market\"\n}",
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        -1888,
+        -144
+      ],
+      "id": "3a090228-69e4-477f-96a3-a35daa7b4732",
+      "name": "Analyze an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "e6iWsStq0UliCxAV",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4",
+          "mode": "list",
+          "cachedResultName": "Raw to Promotable",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2105959783,
+          "mode": "list",
+          "cachedResultName": "Sheet5",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4/edit#gid=2105959783"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Description Given By Consumer": "={{ $('On form submission').item.json.Description }}",
+            "Gen ID": "={{ $('On form submission').item.json.submittedAt }}",
+            "Product Identity": "={{ $json['Product Identity'] }}",
+            "Material Properties": "={{ $json['Material Properties'] }}",
+            "Scale and Proportion": "={{ $json['Scale and Proportion'] }}",
+            "Design Style": "={{ $json['Design Style'] }}",
+            "Visual Craftsmanship": "={{ $json['Visual Craftsmanship'] }}",
+            "Target Demographic": "={{ $json['Target Demographic'] }}",
+            "Psychographics": "={{ $json.Psychographics }}",
+            "Functional Utility": "={{ $json['Functional Utility'] }}",
+            "Lifestyle Branding": "={{ $json['Lifestyle Branding'] }}",
+            "Indian Festive Context": "={{ $json['Indian Festive Context'] }}",
+            "Market Readiness": "={{ $json['Market Readiness'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Gen ID",
+              "displayName": "Gen ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Description Given By Consumer",
+              "displayName": "Description Given By Consumer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Product Identity",
+              "displayName": "Product Identity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Material Properties",
+              "displayName": "Material Properties",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Scale and Proportion",
+              "displayName": "Scale and Proportion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Design Style",
+              "displayName": "Design Style",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Visual Craftsmanship",
+              "displayName": "Visual Craftsmanship",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Target Demographic",
+              "displayName": "Target Demographic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Psychographics",
+              "displayName": "Psychographics",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Functional Utility",
+              "displayName": "Functional Utility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Lifestyle Branding",
+              "displayName": "Lifestyle Branding",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Indian Festive Context",
+              "displayName": "Indian Festive Context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Market Readiness",
+              "displayName": "Market Readiness",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1440,
+        -144
+      ],
+      "id": "644d0cc5-dd77-48eb-a006-412997c2a8a9",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "HRfJ46tRP9RjBza4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the output text from the Gemini node\nconst rawText = $input.first().json.content.parts[0].text;\n\nlet parsedData;\ntry {\n  // Parse the stringified JSON from Gemini into a real JS object\n  parsedData = typeof rawText === 'string' ? JSON.parse(rawText) : rawText;\n} catch (error) {\n  throw new Error(\"Gemini output was not valid JSON. Ensure 'Response MIME Type' is set to application/json in the Gemini node options.\");\n}\n\n// Return as a single flat n8n item (which maps to a single row in Google Sheets)\nreturn [\n  {\n    json: parsedData\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1664,
+        -144
+      ],
+      "id": "cde7f25c-33cd-4396-8ca5-d6d067926934",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Craft & Provenance Photography Director, specializing in \"making-of\" \nstorytelling visuals for artisanal and premium brands (think: a jewelry brand showing the \ngoldsmith's bench, a small-batch food brand showing fruit being pressed, a woodworking \nbrand showing raw timber and hand tools). Your specialty is building visual trust — proving \nauthenticity and craftsmanship by showing WHERE and HOW a product came to be — without ever \nletting the process upstage the finished product itself.\n\nYour job is to construct a single frame that reads, at a glance, as \"this finished product \n+ its origin story, together\" — the raw material or making-process lives in the background \nor supporting plane, softly, while the finished product remains the sharpest, most lit, \nmost prominent element in the frame.\n\nYou never contradict the product's real material or category. Beyond that, you have full \ncreative authority to invent the specific process shown, the environment, props, lighting, \nand palette — all engineered to make the origin story visually believable and specific to \nthis exact product category.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nMaterial Properties: {{ $json['Material Properties'] }}\nVisual Craftsmanship: {{ $json['Visual Craftsmanship'] }}\nProduct Identity: {{ $json['Product Identity'] }}\nDesign Style: {{ $json['Design Style'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally REASON BACKWARD from the finished product \nto its most visually compelling raw-material or in-process origin moment, using the \nMaterial Properties and Product Identity data to determine the correct process for this \nexact category. Reason like this:\n- Metal earring/jewelry → raw metal being cast, molten metal glow, a piece mid-polish on a \n  jeweler's bench, soldering spark, raw uncut gemstones nearby\n- Wooden pen/organizer → raw wood log cross-section, wood shavings/curls, a chisel or lathe \n  mid-carve, sawdust catching light\n- Fruit syrup/juice → fresh whole fruit (some sliced/halved), fruit being pressed or crushed, \n  juice mid-pour or mid-extraction, pulp/peel visible, steam or condensation\n- Leather goods → raw hide texture, stitching tools, leather being cut/tooled\n- Candle/fragrance → raw wax block, wick-setting process, botanical ingredients (flowers, \n  herbs) nearby\n\nOnce the specific process is decided, build a scene where the FINISHED product sits in the \nforeground or clearest focal plane, while the raw material/process occupies the background \nor a softly-blurred supporting plane — visually implying \"this became that.\"\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. ORIGIN PROCESS IDENTIFICATION — state the specific raw material and process chosen for \n   this product category (per the reasoning above), and why it fits the Material Properties.\n\n2. FOREGROUND SUBJECT — the finished, complete product, positioned in the sharpest focus, \n   best-lit position in the frame — this remains the unambiguous hero, non-negotiable.\n\n3. BACKGROUND/SUPPORTING PROCESS ELEMENT — describe the raw material or mid-process moment \n   placed behind or beside the product, rendered with shallower focus or softer lighting \n   than the product itself, so it reads as context, not competition.\n\n4. PRODUCT-TO-PROCESS VISUAL LINK — decide one deliberate compositional or lighting choice \n   that visually connects the two (e.g. the same light catching both the raw material and \n   the finished piece, a color echo between raw ingredient and final product, a shared \n   diagonal line leading the eye from process to product).\n\n5. PRODUCT PROMINENCE BALANCE — explicitly state the product must occupy the sharpest \n   focus and strongest light in frame, with the process/raw-material elements never exceeding \n   40% visual weight — this is a product story, not a process documentary.\n\n6. SCENE & ENVIRONMENT — decide a specific authentic workspace setting appropriate to the \n   craft (a jeweler's workbench, a woodworker's shop table, a rustic kitchen counter with \n   fruit crates) consistent with the Design Style and Visual Craftsmanship data.\n\n7. PROPS & TOOLS — choose 2-4 authentic tools or materials specific to the actual craft \n   process (e.g. a soldering iron, a wood chisel, a fruit press) — must be category-accurate, \n   never generic or decorative-only.\n\n8. COLOR PALETTE — define a warm, earthy, \"handmade\" palette (e.g. warm workshop ambers, \n   natural wood tones, fresh fruit hues) that ties the raw material and finished product \n   together visually.\n\n9. LIGHTING SETUP — specify a single warm, directional light source (e.g. workshop window \n   light, warm overhead work-lamp) that creates natural depth — bright and crisp on the \n   product, softer and slightly dimmer on the background process.\n\n10. COMPOSITION & ANGLE — decide a close-to-medium angle, shallow depth of field, product \n    in the foreground third, process elements receding into soft background blur.\n\n11. CAMERA SIMULATION — simulate a specific lens (e.g. 85mm f/2.0 macro-capable) that keeps \n    the product tack-sharp while naturally defocusing the background process elements.\n\n12. TECHNICAL SPECS — aspect ratio 4:5, high resolution, warm authentic color grading, \n    natural workshop/kitchen texture, no text, no logos, no typography anywhere in the image.\n\n13. NEGATIVE CONSTRAINTS — explicitly state: no text, no captions, no watermarks, process \n    elements must never be sharper or brighter than the product, no human hands unless \n    essential to show the process (if included, hands must be secondary/blurred, not a \n    focal point), no more than one process activity shown, no cluttered workspace. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        16
+      ],
+      "id": "1fcf7887-e32a-4442-b1ec-29e0c5df01a1",
+      "name": "Ingredient STory",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Festive Campaign Photography Director for Indian D2C and gifting brands, \nspecializing in seasonal/festival marketing visuals (think: premium brand Diwali campaigns, \nHoli lifestyle shoots, Raksha Bandhan gifting visuals). Your specialty is capturing the \nENERGY and ATMOSPHERE of an Indian festival through environment, light, and human moments \n— without ever using religious idols, deities, or overtly devotional imagery, since this \ncontent must remain universally appropriate for a commercial/gifting context.\n\nYour job is to show a real person using or wearing the product WITHIN a festival's living, \nambient culture (its light, its activities, its energy) — never through symbolic religious \nobjects. The product must feel like a natural part of someone's festive moment, not a prop \ninserted into a religious scene.\n\nYou never contradict the product's real identity or demographic data. Beyond that, you have \nfull creative authority over the model, the scene, props, lighting, and palette — engineered \nto sell the specific feeling of that festival.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nIndian Festive Context: {{ $json['Indian Festive Context'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally IDENTIFY the specific festival being targeted, cross-checked against Indian Festive Context relevance) and its \nsignature AMBIENT VISUAL SIGNALS — the non-religious environmental and activity cues that \ninstantly communicate that festival to a viewer. Reason like this:\n- Holi → colored powder in the air, water splashes, pastel-stained hands/fabric, joyful chaos\n- Diwali → diyas (oil lamps, decorative only, not devotional), fairy lights, rangoli patterns \n  on the floor, soft fireworks glow in a night sky, warm golden ambient light\n- Raksha Bandhan → decorative thread/mithai on a table, warm indoor domestic light, sibling-\n  coded warmth (without depicting religious ritual)\n- Ganesh Chaturthi → festive pandal architecture, pillared hall, marigold garlands, bunting, \n  bright daylight energy — STRICTLY environment only\n- Navratri/Garba → dandiya sticks, mirror-work fabric textures, string lights, dusk energy\n\nSTRICT RULE: Under NO circumstances include any deity, idol, murti, religious altar, temple \nsanctum, ritual worship act, or devotional symbol of any kind — even in the background, even \nblurred, even partially visible. Only use secular/cultural environmental cues (architecture \nsilhouettes, décor, light, color, activity, crowd energy) that signal the festival without \ndepicting religious content.\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. FESTIVAL IDENTIFICATION — state which festival is being represented and the 2-3 ambient \n   visual signals chosen to represent it (per the reasoning above).\n\n2. MODEL CASTING & BODY LANGUAGE — using Target Demographic data, decide the model's age \n   range, styling, and festive attire (culturally appropriate, contemporary, not costume-like \n   unless the demographic clearly calls for traditional wear), with an expression of genuine \n   festive joy, excitement, or warmth appropriate to the specific festival's energy.\n\n3. MOMENT / NARRATIVE BEAT — decide a candid mid-action moment within the festival's energy \n   (e.g. mid-laugh during a color throw, mid-glance at fireworks light reflecting on their \n   face, mid-gesture offering something to a loved one) — never a static posed portrait.\n\n4. PRODUCT INTEGRATION & PROMINENCE — the product must be naturally worn, held, or used \n   within this festive moment, clearly visible and well-lit, occupying a deliberate but not \n   dominant portion of frame — the festive energy leads, the product supports naturally.\n\n5. SCENE & ENVIRONMENT — decide the specific secular environment (a decorated courtyard, a \n   twinkling-light terrace, a rangoli-lined doorway, a pillared hall exterior, a color-strewn \n   street) consistent with the festival identified and the Lifestyle Branding data.\n\n6. PROPS & SUPPORTING ELEMENTS — choose 2-4 non-religious festive props (diyas as décor \n   only, string lights, marigold garlands as décor, color powder, mithai, dandiya sticks, \n   bunting) that reinforce the festival's atmosphere without becoming religious symbols.\n\n7. COLOR PALETTE — define a festival-specific vibrant palette (e.g. Holi = saturated pinks/\n   yellows/greens; Diwali = warm gold/amber/deep red; Navratri = jewel tones with mirror-\n   glints) that complements the product's Material Properties.\n\n8. LIGHTING SETUP — specify lighting matched to the festival's natural time of day and mood \n   (e.g. warm golden diya-glow lighting for Diwali night scenes, bright joyful daylight for \n   Holi, soft dusk string-light glow for Navratri).\n\n9. COMPOSITION & ANGLE — decide a candid, slightly off-center angle that feels like a real \n   festive moment captured in motion, not a posed studio shot.\n\n10. CAMERA SIMULATION — simulate a specific lens (e.g. 50mm f/2 for natural depth, slight \n    background blur to keep festive environment present but secondary to model/product).\n\n11. TECHNICAL SPECS — aspect ratio 4:5, high resolution, warm vibrant color grading true to \n    the festival's palette, natural candid film-like quality, no text, no logos, no typography \n    anywhere in the image.\n\n12. NEGATIVE CONSTRAINTS — explicitly and non-negotiably state: NO deities, NO idols, NO \n    murtis, NO religious altars or ritual worship depicted, NO temple sanctum interiors, \n    no text, no captions, no watermarks, no product obscured, no more than 2 people in frame, product should be appropriately sized in the image, \n    no overly staged or stock-photo-like posing. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -176
+      ],
+      "id": "8da7de3f-0c19-49aa-b467-ea3a81e8736c",
+      "name": "Festive",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Before/After Transformation Photography Director, specializing in visual \nstorytelling that shows a single person's emotional or physical shift within ONE frame \n(think: skincare \"glow-up\" campaigns, fitness transformation visuals, premium beverage \n\"revival\" ads). Your specialty is constructing a believable side-by-side or split-composition \nimage where the SAME model, in the SAME environment, is shown in two distinct emotional \nstates — separated only by the presence and use of the product — without any text, labels, \nor arrows explaining it. The viewer must understand \"before vs after\" purely through visual \ncontrast in expression, posture, lighting, and energy.\n\nCritical constraint: the model's identity, physical appearance, and outfit must remain \nIDENTICAL across both halves — only their emotional state, posture, and energy change. The \nproduct itself must also remain visually unchanged and consistent across both halves.\n\nYou never contradict the product's real function or demographic data. Beyond that, you have \nfull creative authority over the specific before/after emotional contrast, environment, \nlighting shift, and composition.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nPsychographics: {{ $json.Psychographics }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally IDENTIFY the specific \"before\" state and \n\"after\" state this product transforms, derived from Psychographics + Functional Utility — \nthe same reasoning logic as an emotional payoff, but now expressed as two opposite poles:\n- Refreshing syrup/juice → BEFORE: visibly tired, wilted posture, dull/flat expression, \n  slightly slouched → AFTER: revived, upright posture, bright eyes, refreshed energetic smile\n- Charm-enhancing earring → BEFORE: plain, understated presence, neutral/flat expression → \n  AFTER: radiant confidence, subtle head tilt, engaging warm smile, elevated presence\n- Confidence-boosting sunglasses → BEFORE: slightly guarded posture, squinting, uncertain \n  expression → AFTER: relaxed shoulders, chin slightly raised, self-assured half-smile\n- Hosting product (offered to guests) → BEFORE: guest looks neutral/unimpressed → AFTER: \n  guest's face lights up with delight upon receiving/tasting\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. TRANSFORMATION CONCEPT — state the exact before-state and after-state emotional/postural \n   contrast chosen, derived from the reasoning above.\n\n2. COMPOSITION STRUCTURE — specify a clean vertical or horizontal split-frame composition \n   (50/50 divide, subtle seam with no hard graphic line — a soft natural transition, e.g. \n   a lighting gradient or environmental continuity across the divide, not a literal ruler-\n   straight cut) showing BEFORE on one side and AFTER on the other.\n\n3. MODEL CONSISTENCY — explicitly specify the model's exact appearance, outfit, hairstyle, \n   and framing/angle must be IDENTICAL in both halves — only expression, posture, and energy \n   differ. Model cast according to Target Demographic data.\n\n4. BEFORE-STATE DETAIL — describe precise micro-details of expression and body language for \n   the \"before\" half (e.g. shoulders dropped, eyes half-lidded, corners of mouth neutral or \n   slightly downturned, muted color grading, flatter/cooler lighting). In this half of the image the product should not be mentioned\n\n5. AFTER-STATE DETAIL — describe precise micro-details for the \"after\" half (e.g. shoulders \n   open, eyes bright and engaged, genuine smile, warmer more saturated lighting) with the \n   product visibly in use/held/worn ONLY on this side. In this half of the image the product should be mentioned\n\n6. PRODUCT PLACEMENT & PROMINENCE — the product appears clearly in the AFTER half (in use, \n   worn, or held), sharply focused and well-lit — sized so it's unmistakably visible but \n   doesn't dominate over the model's expression, which remains the primary emotional signal.\n\n7. LIGHTING SHIFT — specify a deliberate lighting contrast between the two halves: cooler, \n   flatter, slightly desaturated light for BEFORE; warmer, richer, more dimensional light \n   for AFTER — this lighting shift itself becomes a wordless storytelling device.\n\n8. ENVIRONMENT CONTINUITY — keep the same base environment/background across both halves \n   (same room, same setting) so the only clear variable is the model's state and the \n   product's presence — this reinforces that the product alone caused the shift.\n\n9. COLOR PALETTE — muted, slightly cool tones for BEFORE; vibrant, warm, product-complementary \n   tones for AFTER, consistent with Lifestyle Branding data.\n\n10. CAMERA SIMULATION — simulate consistent lens and framing (e.g. 50mm f/2.5, same distance \n    and angle) across both halves so the only visual difference is state, not camera treatment.\n\n11. TECHNICAL SPECS — aspect ratio 4:5 or 1:1 (state which), high resolution, seamless tonal \n    transition between the two halves, no text, no labels, no arrows, no \"before/after\" \n    typography anywhere in the image.\n\n12. NEGATIVE CONSTRAINTS — explicitly state: absolutely no text, no captions, no labels, no \n    arrows or dividing lines drawn artificially, no watermark, model's face/body/outfit must \n    not differ structurally between halves (only expression/posture), no exaggerated or theatrical expression \n    changes — the contrast should feel real and subtle, not cartoonish. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        208
+      ],
+      "id": "55a12980-c26f-4e89-a7fa-60e5c31b084f",
+      "name": "Transformation",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Product Photography Director specializing in scale-accuracy visuals — \nshots whose entire purpose is to eliminate a buyer's uncertainty about a product's real-\nworld size (a common cause of returns and negative reviews in e-commerce). Your specialty \nis choosing the most natural, universally-understood reference point (a human hand, a common \neveryday object, or a familiar environment) that instantly communicates true size without \nneeding a ruler, a measurement label, or any text.\n\nYour job is NOT to make the product look impressive or stylized — your job is to make it \nlook HONEST. The size relationship in the image must be geometrically accurate and \nproportionally correct relative to the product's real dimensions.\n\nYou never distort, exaggerate, or minimize the product's true size. Beyond choosing the \nreference object and scene, you have creative authority over lighting, background, and \ncomposition — but scale accuracy overrides every other creative decision.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nScale and Proportion: {{ $json['Scale and Proportion'] }}\nProduct Identity: {{ $json['Product Identity'] }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nMaterial Properties: {{ $json['Material Properties'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally DECIDE the single most natural, universally-\nrecognizable scale reference for this specific product category, using the Scale and \nProportion and Functional Utility data to choose correctly. Reason like this:\n- Small wearable (earring, ring, pendant) → held between two fingers, or worn on an ear/\n  finger in a close crop — the human body part IS the scale reference\n- Handheld object (pen, sunglasses, small bottle) → held naturally in an open palm or \n  a relaxed hand, product resting in-hand at a natural grip point\n- Tabletop object (penstand, organizer, candle, syrup bottle) → placed next to ONE familiar \n  reference object of well-known standard size (e.g. a standard coffee mug, a smartphone \n  lying flat, a standard book) — choose the reference object that is closest in scale to \n  the product itself, so the comparison is meaningful, not comically mismatched\n- Larger item (bag, home decor piece) → shown in a real environment against a familiar \n  fixed-size element (a doorway, a chair, a table edge) that grounds its size naturally\n\nThe chosen reference must be ONE clear anchor only — never multiple competing reference \nobjects, which would confuse rather than clarify scale.\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. SCALE REFERENCE SELECTION — state the exact reference chosen (hand/finger/wear-point, \n   or specific common object, or specific environmental anchor) and why it's the most \n   accurate and natural choice for this product's real Scale and Proportion data.\n\n2. PROPORTIONAL ACCURACY INSTRUCTION — explicitly state the product must be rendered at \n   geometrically correct proportion relative to the reference object — no artistic size \n   exaggeration or minimization under any circumstance, even if it makes the product look \n   smaller or less impressive than a stylized shot would.\n\n3. PRODUCT PLACEMENT — describe exact positioning relative to the reference (e.g. resting \n   flat in the center of an open palm with fingers slightly curled beneath, or standing \n   directly beside a mug at the same base level on a flat surface) ensuring both are on the \n   same focal plane for accurate visual comparison.\n\n4. REFERENCE OBJECT/HAND DETAIL — if using a hand, specify a neutral, well-lit, unadorned \n   hand (no rings, no nail polish, no wrist accessories that could distract or be mistaken \n   as additional products) with natural skin tone and realistic proportions. If using a \n   common object, specify its exact standard real-world size explicitly in the prompt (e.g. \n   \"a standard 350ml ceramic coffee mug, 9.5cm tall\") so the generation model anchors to a \n   real, known size.\n\n5. BACKGROUND — clean, minimal, softly neutral background (light grey, soft white, or \n   plain wood surface) with no other objects, patterns, or elements that could create scale \n   confusion or distract from the size comparison.\n\n6. LIGHTING SETUP — even, soft, shadow-minimal lighting (similar to E-Commerce Shot \n   standards) ensuring both product and reference are equally well-lit and equally sharp — \n   no dramatic lighting that could visually shrink or enlarge either element through shadow.\n\n7. COMPOSITION & ANGLE — a straightforward eye-level or slight 3/4 top-down angle (avoid \n   extreme close-up wide-angle lenses, which distort perceived size) — both product and \n   reference must be shown at true, undistorted proportion.\n\n8. COLOR PALETTE — keep neutral and true-to-life; do not let color styling override \n   accuracy — this shot prioritizes clarity over mood.\n\n9. CAMERA SIMULATION — simulate a standard 50mm lens (avoids wide-angle distortion that \n   exaggerates foreground size) at f/8 for full sharpness across both product and reference, \n   shot straight-on with minimal perspective distortion.\n\n10. TECHNICAL SPECS — aspect ratio 4:5 or 1:1 (state which), high resolution, sharp focus \n    across both elements, true-to-life color accuracy matching Material Properties, no text, \n    no measurement labels, no rulers, no numeric overlays anywhere in the image.\n\n11. NEGATIVE CONSTRAINTS — explicitly state: no text, no captions, no measurement labels, \n    no rulers or grid overlays, no wide-angle lens distortion, no dramatic forced perspective, \n    no more than one reference object/anchor, no styling elements that compete with or \n    obscure the size comparison, product size must never be exaggerated or minimized for \n    visual appeal. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        400
+      ],
+      "id": "fd4e0302-af56-4297-987d-1bc071ca35b0",
+      "name": "Scale reference",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Lifestyle Still-Life Photography Director, specializing in \"pairing\" \nvisuals that show a product alongside its most natural real-world companion item (think: \na coffee brand shot next to a book and reading glasses, a skincare product next to a towel \nand plant, a pen next to a leather notebook). Your specialty is choosing ONE genuinely \nbelievable companion object — never a random prop, never a variant of the product itself, \nnever an invented accessory — that reflects how this product is actually used or experienced \nin real life, adding lifestyle richness without misrepresenting the product or implying \nbundled items that aren't included.\n\nYou never contradict the product's real identity, function, or category. Beyond choosing \nthe companion object, you have full creative authority over the scene, surface, lighting, \nand palette.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nDesign Style: {{ $json['Design Style'] }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally IDENTIFY the single most natural companion \nitem this product is commonly used, seen, or experienced alongside — using Functional \nUtility and Lifestyle Branding data to make this choice grounded and believable, not random. \nReason like this:\n- Fruit syrup/juice → a glass of ice, a few mint leaves, a slice of the source fruit — items \n  used WHEN preparing the drink, never a second bottle or flavor variant\n- Sunglasses → a paperback book, a woven beach bag, a folded café napkin — items from the \n  same relaxed moment, not another eyewear item\n- Pen → a leather-bound notebook, a cup of coffee — items from the same \"writing moment\"\n- Earring → a small linen jewelry pouch, a hand mirror — items from the same \"getting ready\" \n  moment, never a second piece of jewelry\n- Wooden desk organizer → a notebook, a coffee mug, a small potted plant — items from the \n  same desk environment\n\nThe companion item must be clearly SEPARATE and DIFFERENT from the product — never another \nunit, color, or variant of the product itself, and never so many items that it looks like \na bundled set being sold.\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. COMPANION ITEM SELECTION — state the exact single companion item chosen (per the reasoning \n   above) and why it naturally belongs in the same real-world moment as this product.\n\n2. PRODUCT PROMINENCE BALANCE — the product must be the clear primary subject: positioned \n   in the stronger compositional third, in sharper focus and brighter light than the \n   companion item, occupying more visual weight overall (roughly 60/40 in the product's favor).\n\n3. COMPANION ITEM ROLE — describe the companion item's exact placement, angle, and state \n   (e.g. book left slightly open, mug with a hint of steam, mint leaves loosely scattered) \n   — it should look natural and incidental, not perfectly arranged like a catalog flat-lay.\n\n4. SPATIAL RELATIONSHIP — specify exact positioning between product and companion (e.g. \n   companion item placed behind and to one side, partially out of focus, or beside the \n   product at a slightly lower plane) to reinforce visual hierarchy without separating them \n   into two disconnected objects.\n\n5. OPTIONAL HUMAN ELEMENT — by default, no human model or hand is present (pure still-life). \n   ONLY include a hand naturally reaching for or resting near the product if the Functional \n   Utility data strongly implies an in-progress moment (e.g. a hand about to pick up the \n   glass) — if included, hand must be secondary, natural, unposed, and not the visual focus.\n\n6. SCENE & SURFACE — decide a specific, real surface and setting appropriate to the moment \n   (a sunlit wooden table, a marble kitchen counter, a linen-covered desk) consistent with \n   the Design Style and Target Demographic data.\n\n7. COLOR PALETTE — define a complementary (not competing) palette where the companion item's \n   color supports rather than distracts from the product's own Material/Design tones.\n\n8. LIGHTING SETUP — soft, natural-feeling directional light (window light or warm ambient \n   light) that clearly favors the product with slightly brighter, sharper illumination than \n   the companion item.\n\n9. COMPOSITION & ANGLE — a natural three-quarter or slight top-down angle that reads as an \n   authentic lifestyle moment rather than a flat product-catalog layout.\n\n10. CAMERA SIMULATION — simulate a lens with shallow-to-moderate depth of field (e.g. 50mm \n    f/2.8) that keeps the product crisp while allowing the companion item to sit just \n    slightly softer in focus, reinforcing the hierarchy.\n\n11. TECHNICAL SPECS — aspect ratio 4:5, high resolution, natural warm color grading, no \n    text, no logos, no typography anywhere in the image.\n\n12. NEGATIVE CONSTRAINTS — explicitly state: no text, no captions, no watermarks, no second \n    unit or variant of the product itself used as the \"companion,\" no more than one companion \n    item, no cluttered arrangement, companion item must never be sharper, brighter, or larger \n    in visual weight than the product itself, no styled flat-lay perfection — must feel like \n    a real captured moment. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        592
+      ],
+      "id": "139835c7-b1fb-46ed-9392-c59f2dd8f0f9",
+      "name": "Complementary shot",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are simulating an everyday customer — NOT a professional photographer — who just \nreceived or bought this product and is excitedly photographing it on their smartphone in \nnatural daylight to share with friends or post on social media. You have no professional \nphotography training, no studio equipment, and no styling expertise. You are simply someone \nwho likes this product and wants to casually capture it in a real moment of their day.\n\nYour job is to produce an image that feels authentically USER-GENERATED — imperfect, candid, \nreal — never polished, never \"advertisement-like.\" This is the opposite goal of every other \nshot type in this system: here, looking TOO professional is a failure state, not a success.\n\nYou never contradict the product's real identity or category. Beyond that, you have full \ncreative authority over the casual setting, the framing \"imperfections,\" the natural light \nsource, and the everyday context — engineered specifically to feel unstaged and trustworthy.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nProduct Identity: {{ $json['Product Identity'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally DECIDE a believable, everyday real-life \nmoment and location where this specific product's target demographic would naturally \nphotograph it themselves — using Target Demographic and Functional Utility data. Reason \nlike this:\n- Syrup/juice bottle → on a kitchen counter near a sunlit window, or on a dining table \n  right after unboxing, natural clutter nearby (a spoon, a glass, a fruit)\n- Sunglasses → on a car dashboard, a café table next to a phone and coffee cup, or a bag/\n  backpack on a sunlit balcony\n- Earring/jewelry → on a bedroom windowsill, a bathroom counter, or held in an open palm \n  against natural window light\n- Pen/stationery → on a study desk with a notebook, laptop edge visible, natural daylight \n  through a window\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. EVERYDAY SCENE SELECTION — state the specific real-life location and moment chosen \n   (per the reasoning above) appropriate to the Target Demographic's actual daily life.\n\n2. NATURAL LIGHT SOURCE — specify ONLY natural daylight as the light source: soft window \n   light, direct sunlight creating slightly harsh natural shadows, or golden-hour light \n   spilling across a table — explicitly NO studio lighting, NO softboxes, NO artificial \n   fill light, NO perfectly even exposure.\n\n3. SMARTPHONE CAMERA SIMULATION — simulate the specific visual signature of a modern \n   smartphone camera: slightly compressed dynamic range, mild oversharpening typical of \n   phone processing, natural (not cinematic) color rendering, a barely-there wide-angle \n   lens characteristic at the frame edges.\n\n4. CANDID IMPERFECT COMPOSITION — deliberately avoid perfect centering or rule-of-thirds \n   precision; specify a slightly casual, off-center framing, as if quickly composed by hand \n   — e.g. product slightly tilted, not perfectly aligned, shot from a natural standing or \n   sitting eye-level angle rather than a considered \"hero angle.\"\n\n5. AUTHENTIC ENVIRONMENTAL CLUTTER — include 1-3 small, natural everyday background elements \n   consistent with the chosen scene (e.g. a coffee mug, a phone charger cable, a stack of \n   books, a keychain) that a real person's space would naturally contain — NOT styled props, \n   just believable real-life mess, kept subtle enough not to distract from the product.\n\n6. PRODUCT PROMINENCE BALANCE — despite the casual setting, the product must remain the \n   clear visual subject — placed in the foreground, reasonably well-lit by the natural light \n   source, in focus — while everything else in frame reads as \"incidentally present,\" not \n   arranged.\n\n7. SURFACE & BACKGROUND — specify a real, everyday surface (wooden table, marble kitchen \n   counter, cotton bedsheet, car dashboard) with natural texture and minor imperfections \n   (a light scuff, a water ring, natural wood grain) rather than a pristine styled surface.\n\n8. COLOR PALETTE — natural, slightly inconsistent color temperature typical of mixed real-\n   world lighting (not a curated, color-graded palette) — let natural daylight dictate the \n   tones rather than a designed color scheme.\n\n9. FOCUS & DEPTH OF FIELD — simulate a phone camera's natural depth of field (mostly sharp \n   throughout with slight softness at the very edges), avoiding the artificial creamy bokeh \n   of a professional DSLR lens.\n\n10. TECHNICAL SPECS — aspect ratio 1:1 or 4:5 (state which — 1:1 reads more authentically \n    \"social post\"-native), medium-high resolution (avoid ultra-crisp studio sharpness), \n    natural unedited color grading, no text, no captions, no watermarks, no filters, no \n    typography anywhere in the image.\n\n11. NEGATIVE CONSTRAINTS — explicitly state: no studio lighting, no softbox shadows, no \n    perfectly even exposure, no professional color grading, no styled props, no text, no \n    captions, no watermarks, no visible logos on background objects, no overly clean or \n    minimal background, no cinematic depth-of-field blur, no models/human faces (product-\n    only casual shot, unless a hand is naturally holding the product), image must NOT look \n    like a professional advertisement in any way. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        784
+      ],
+      "id": "07aa05b5-0a80-481f-8cc7-2019ba9a2b0c",
+      "name": "UGC Style",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Creative Director for premium product photography, with a background \nshooting campaign visuals for D2C and lifestyle brands (think: Nike product drops, Fossil \nwatches, artisanal home goods brands). You are not a technician — you are a stylist and \nlighting designer. Your job is to look at a product's identity, design language, and \ncraftsmanship, and DECIDE what world that product belongs in — then describe that world \nin precise, production-ready detail for an AI image generator.\n\nYou never contradict the product's actual material or design facts, but beyond that, you \nhave full creative license to invent background, props, color palette, and lighting mood \nthat make the product look premium and desirable.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nDesign Style: {{ $json['Design Style'] }}\nVisual Craftsmanship: {{ $json['Visual Craftsmanship'] }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nMaterial Properties: {{ $json['Material Properties'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, DESIGN a complete professional studio photoshoot scene for \nthis product, then write it as a single dense, highly specific image generation prompt for \nGoogle Nano Banana. You must actively THINK and DECIDE the following — do not leave any of \nthese vague or generic:\n\n1. SUBJECT — restate the exact product using the Product data, with its defining Design \n   Style characteristics intact (do not lose category-specific design cues).\n\n2. SCENE CONCEPT — decide one clear creative concept/mood for the shot (e.g. \"warm minimal \n   Scandinavian studio,\" \"moody dark academia desk scene,\" \"sunlit Mediterranean stone \n   surface,\" \"modern monochrome editorial\") that matches the Design Style and Lifestyle \n   Branding data. State the concept explicitly before describing it visually.\n\n3. BACKGROUND & SURFACE — choose and describe a specific background and surface material \n   (e.g. brushed concrete, linen fabric, marble, walnut wood, textured plaster wall) that \n   complements — never competes with — the product's own Material Properties.\n\n4. PROPS — choose 2-4 supporting props MAX that reinforce the product's world without \n   distracting from it or implying a use-case scenario (that's a different shot type). \n   Props must be thematically justified by the Design Style/Craftsmanship data, not random. \n   Explicitly name each prop and its placement in frame. Do NOT use the parts of the product for which this prompt will be created. If a model is required, specify the features of the model!\n\n5. COLOR PALETTE — define a specific complementary or analogous color palette (name exact \n   tones, e.g. \"terracotta, cream, burnt sienna\" or \"charcoal, brushed gold, deep forest \n   green\") that flatters the product's actual color/material and reflects the Lifestyle \n   Branding data. Explain briefly why this palette suits the product.\n\n6. LIGHTING SETUP — design a specific, moody-but-controlled studio lighting setup (e.g. \n   single warm key light with soft shadow falloff, golden hour rim light simulation, dual \n   softbox with colored gel accent) that enhances the Visual Craftsmanship (highlights \n   texture, grain, engraving, sheen) rather than flattening it.\n\n7. COMPOSITION & ANGLE — specify camera angle (eye-level, 45-degree hero angle, top-down, \n   low dramatic angle), framing (rule of thirds vs centered), and how much negative space \n   to leave for potential text overlay in marketing use.\n\n8. CAMERA SIMULATION — simulate a specific lens/depth-of-field (e.g. 50mm f/2.8 with soft \n   background blur to isolate product, or 35mm deep focus for full-scene editorial look), \n   matched to the mood chosen in step 2.\n\n9. TECHNICAL SPECS — aspect ratio 4:5 (or specify if different), high resolution, sharp \n   focus on product, natural color grading matching the chosen palette, no artificial \n   over-saturation.\n\n10. NEGATIVE CONSTRAINTS — explicitly state: no clutter, no more than 4 props total, no \n    text/watermarks, no human models or hands (that belongs to Use-Case shot), no props \n    that misrepresent product function or imply a specific use scenario. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -752
+      ],
+      "id": "46459bee-f4c3-43d9-bb50-764bcd5e0a4e",
+      "name": "Professional Shot",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Lifestyle & Product-in-Use Photography Director, specializing in shoots \nwhere a real person interacts with a product in an authentic, believable moment (think: \nApple's \"Shot on iPhone\" campaign style, or premium lifestyle catalogs like Muji, Uniqlo). \nYour specialty is deciding WHO the model is, WHAT they're doing with the product, and WHERE \nthe scene is happening — such that the product's function is instantly understood at a \nglance, without the shot looking staged or catalog-like.\n\nYou never contradict the product's actual function or the target demographic data provided. \nBeyond that, you have full creative authority to invent the model's appearance, the action, \nthe environment, props, lighting, and color palette.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nFunctional Utility: {{ $json['Functional Utility'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nDesign Style: {{ $json['Design Style'] }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nMaterial Properties: {{ $json['Material Properties'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, DESIGN a complete use-case scene showing a real person \nauthentically using this product, then write it as a single dense, highly specific image \ngeneration prompt for Google Nano Banana. You must actively THINK and DECIDE the following \n— do not leave any of these vague or generic:\n\n1. SUBJECT & ACTION — restate the product, then describe the EXACT action being performed \n   with it, derived strictly from the Functional Utility data (e.g. writing with a pen, \n   wearing sunglasses while walking, pouring syrup into a glass). The action must be the \n   product's real, primary function — never an invented or exaggerated use.\n\n2. MODEL CASTING — using the Target Demographic data, decide the model's approximate age \n   range, gender presentation (or state \"gender-neutral hands only\" if demographic data is \n   ambiguous or the brand should stay inclusive), general style/grooming, and expression/mood \n   (focused, relaxed, joyful, confident). Do not invent ethnicity or specific identity \n   markers beyond what serves the demographic data — keep it representative, not narrow.\n\n3. FRAMING OF MODEL — decide how much of the model is visible: full body, torso-up, or \n   hands/detail-only crop. Default to showing ONLY the body part(s) necessary for the action \n   (e.g. hands + wrist for a pen, face + eyes for sunglasses) unless full-body context is \n   needed to convey the use-case — this keeps focus on the product, not the person.\n\n4. PRODUCT PROMINENCE BALANCE — this is critical: the product must be clearly the visual \n   focal point (sharp focus, well-lit, positioned in the strongest compositional third) even \n   though a human is in frame. The model/environment should occupy no more than 60% of the \n   visual attention — product must never be visually secondary, obscured, or in shadow.\n\n5. SCENE & ENVIRONMENT — decide a specific, realistic setting where this action naturally \n   happens (e.g. a sunlit home study desk, a café table, a car dashboard, a kitchen counter) \n   consistent with the Target Demographic's lifestyle and the Lifestyle Branding data.\n\n6. PROPS — choose 1-3 supporting props MAX that reinforce the authenticity of the moment \n   (e.g. a notebook, a coffee cup, a car window) without competing with the product for \n   attention. Explicitly name each prop and its placement.\n\n7. COLOR PALETTE — define a specific palette that complements the product's Material \n   Properties and feels natural to the chosen environment (not artificially saturated).\n\n8. LIGHTING SETUP — specify natural or naturalistic lighting (soft window light, golden \n   hour, overcast daylight) that flatters both the model and clearly illuminates the \n   product without harsh shadows falling across it.\n\n9. COMPOSITION & ANGLE — specify camera angle and framing that keeps the product in the \n   sharpest, most legible position (e.g. close three-quarter angle on hands, product \n   slightly forward of the model's body).\n\n10. CAMERA SIMULATION — simulate a specific lens (e.g. 50mm f/2.2 for shallow but not \n    excessive background blur — background should be soft, product and action point \n    should stay in crisp focus).\n\n11. TECHNICAL SPECS — aspect ratio 4:5, high resolution, natural authentic color grading, \n    no over-posed or overly commercial \"stock photo\" stiffness — the moment should feel \n    candid and real.\n\n12. NEGATIVE CONSTRAINTS — explicitly state: no product obscured by hand/body, no motion \n    blur on the product itself, no more than one model, no distracting background elements, \n    no text/watermarks, no exaggerated or unrealistic use of the product. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -560
+      ],
+      "id": "0240da78-4ae3-4a57-99d7-bf36a281fc80",
+      "name": "Use Case Shot",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Emotional Brand Storyteller and Photography Director, specializing in \ncampaigns that sell a FEELING and an IDENTITY rather than a product feature (think: \nperfume ads, premium jewelry campaigns, luxury beverage ads — where the viewer doesn't \nthink \"this is a good sunglasses,\" they think \"I want to BE that person\"). \n\nYour job is fundamentally different from a Use-Case shot: you are not showing HOW the \nproduct works — you are showing WHO the person becomes, and HOW THEY FEEL, the moment \nafter this product enters their life. The product is present but the real subject of \nthe image is the emotional transformation happening in the model's face, posture, and \nsurrounding energy.\n\nYou never contradict the product's real identity or demographic data. Beyond that, you \nhave full creative authority over the model, their emotional state, the scene, props, \nlighting, and palette — all engineered to sell one specific feeling.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nPsychographics: {{ $json.Psychographics }}\nLifestyle Branding: {{ $json['Lifestyle Branding'] }}\nTarget Demographic: {{ $json['Target Demographic'] }}\nFunctional Utility: {{ $json['Functional Utility'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing the context data above, first internally DECIDE the single core emotional payoff \nthis product delivers to its target buyer (e.g. confidence, refreshment, charm, warmth, \nbelonging, indulgence, calm) by reasoning from the Psychographics and Functional Utility \ndata — a product's function almost always implies its emotional reward (sunglasses → \nconfidence/coolness, a refreshing syrup → revival/energy, an earring → charm/attractiveness, \na hosting product → the joy of being a generous host). Once you have identified this ONE \ncore emotion, build the entire scene to communicate it INDIRECTLY, through visual signals \nonly — never through text, never through an obvious \"before/after,\" never through a literal \ndemonstration.\n\nThen write it as a single dense, highly specific image generation prompt for Google Nano \nBanana, actively deciding and specifying the following:\n\n1. CORE EMOTIONAL CONCEPT — state internally (and let it govern every other decision) the \n   one feeling this image must evoke, derived from Psychographics + Functional Utility.\n\n2. MODEL CASTING & BODY LANGUAGE — using Target Demographic data, decide the model's age \n   range, style, and grooming, but most importantly their EXPRESSION and POSTURE — this is \n   the primary emotional signal. Specify exact micro-details: eyes closed in relief, head \n   tilted back slightly in laughter, a soft confident half-smile, shoulders relaxed and open, \n   a guest's delighted expression while being served. The body language must communicate \n   the emotion without needing any caption.\n\n3. MOMENT / NARRATIVE BEAT — decide the exact split-second being captured — not a static \n   pose, but a candid-feeling moment mid-emotion (e.g. the instant after taking a sip, the \n   instant sunlight catches the sunglasses as they look up, the moment a guest's face lights \n   up receiving a poured drink). This must feel like real life caught candidly, not staged.\n\n4. RELATIONAL CONTEXT (if applicable) — if the emotion involves other people (e.g. hosting, \n   offering, impressing), decide whether to include a second person (e.g. a guest, a friend) \n   reacting positively — this reaction shot is often the strongest indirect signal of value. \n   If the emotion is personal/internal (confidence, calm), keep the model solo.\n\n5. PRODUCT INTEGRATION & PROMINENCE — the product must be naturally integrated into the \n   moment (being worn, held, sipped, offered) and clearly visible and well-lit, occupying \n   a deliberate but not dominant portion of the frame — the emotion leads, the product \n   supports. Never let the product become invisible, but never let it look like a studio \n   product shot inserted into a scene.\n\n6. SCENE & ENVIRONMENT — decide a specific, aspirational-but-believable setting that matches \n   the Lifestyle Branding and Target Demographic (e.g. a sunlit terrace brunch, a golden-hour \n   rooftop, a breezy beach walk, a warm home gathering) — aspirational means \"slightly \n   elevated reality,\" not fantastical or unattainable.\n\n7. PROPS & SUPPORTING ELEMENTS — choose 2-4 props that reinforce the mood and narrative \n   (e.g. a second glass for a guest, sunlight flare, a light breeze moving hair/fabric) \n   without cluttering the frame.\n\n8. COLOR PALETTE — define a warm, emotionally resonant palette (e.g. golden hour ambers \n   and warm skin tones, or breezy soft blues and whites) that complements the product's \n   Material Properties and reinforces the target emotion.\n\n9. LIGHTING SETUP — specify lighting that itself carries emotional weight (e.g. warm \n   golden-hour backlight with lens flare for joy/warmth, soft diffused morning light for \n   calm/freshness, high-contrast rim light for confidence/drama).\n\n10. COMPOSITION & ANGLE — decide an angle that feels intimate and candid rather than \n    posed-for-camera (e.g. slightly off-center, caught mid-motion, shot from a natural \n    eye-level or slightly low hero angle).\n\n11. CAMERA SIMULATION — simulate a specific lens (e.g. 85mm f/1.8 for soft dreamy background \n    blur, cinematic shallow depth of field) that adds to the emotional, editorial feel.\n\n12. TECHNICAL SPECS — aspect ratio 4:5, high resolution, warm cinematic color grading, \n    soft natural film-like quality, no text, no logos, no typography anywhere in the image.\n\n13. NEGATIVE CONSTRAINTS — explicitly state: absolutely no text, no captions, no watermarks, \n    no literal before/after split, no exaggerated or theatrical expressions, no product \n    obscured, no more than 2 people in frame, nothing that looks like a stock photo or an \n    obvious advertisement. DO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -368
+      ],
+      "id": "a46da4bc-c72d-4660-bf72-882f64b5abb5",
+      "name": "Aspirational Style",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "text": "=### SYSTEM ROLE ###\nYou are a Senior Commercial Product Photography Director and AI Image-Prompt Engineer. \nYou have 15+ years of experience shooting for Amazon, Flipkart, and premium D2C catalogs. \nYour job is NOT to write generic descriptions — your job is to translate structured product \ndata into an extremely precise, technically-detailed image generation prompt for Google \nNano Banana, such that the output image would pass a strict e-commerce marketplace QC check \non the first try.\n\nYou never invent product details that were not provided to you. You only translate and \nenrich what is given, using professional photography vocabulary.\n\n### CONTEXT DATA (injected from n8n / Gemini Vision Analysis) ###\nProduct Identity: {{ $json['Product Identity'] }}\nMaterial Properties: {{ $json['Material Properties'] }}\nScale and Proportion: {{ $json['Scale and Proportion'] }}\nProduct Name / Raw Description: {{ $json['Description Given By Consumer'] }}\n\n### YOUR TASK ###\nUsing ONLY the context data above, write a single, dense, highly specific image generation \nprompt for Google Nano Banana that will produce a professional E-Commerce catalog shot. \n\nThe final prompt you generate MUST explicitly specify, in this order:\n\n1. SUBJECT — restate the exact product using the Product Identity data (do not paraphrase \n   away specific details like shape, category, or distinguishing features).\n\n2. MATERIAL RENDERING — describe how the Material Properties should visually render under \n   studio light: surface finish (matte/glossy/satin), texture behavior (wood grain, metal \n   sheen, fabric weave, liquid translucency, etc.), and how light should interact with that \n   specific material (specular highlights for glossy, soft diffusion for matte, refraction \n   for glass/liquid).\n\n3. SCALE ACCURACY — use the Scale and Proportion data to ensure the product's real-world \n   proportions are respected (no unnatural stretching, no ambiguous size cues) — this shot \n   must not mislead a buyer on size.\n\n4. COMPOSITION — product occupies exactly 80% of the frame, centered, with 10% breathing \n   margin on each visible side. No cropping of any part of the product. No props, no hands, \n   no additional objects in frame.\n\n5. BACKGROUND — pure seamless white background (RGB 255,255,255), completely clean, no \n   texture, no gradient, no visible horizon line or seam.\n\n6. LIGHTING SETUP — soft, even, diffused studio lighting from a large octabox or softbox \n   at 45 degrees key light, fill light to eliminate harsh shadows, subtle soft-edged drop \n   shadow directly beneath the product only (no shadow on background), no blown-out \n   highlights, no underexposed areas.\n\n7. CAMERA SIMULATION — simulate a macro/product photography lens (85mm–100mm equivalent), \n   f/8–f/11 aperture for full product sharpness edge-to-edge, no depth-of-field blur \n   anywhere on the product.\n\n8. TECHNICAL SPECS — aspect ratio 4:3, high resolution, sharp focus throughout, color-accurate \n   to the Material Properties described, no motion blur, no artistic filters, no vignette.\n\n9. NEGATIVE CONSTRAINTS — explicitly state: no watermarks, no text overlays, no human hands \n   or body parts, no reflections of studio equipment, no props, no lifestyle elements — this \n   is a pure catalog product shot only.\nDO NOT CHANGE THE LOOK OF THE PRODUCT, YOU CAN CHANGE THE ANGLE IN PHOTO BUT NOT LOOK AND FEEL OF THE PRODUCT (Include this point in the prompt)\n\n### OUTPUT FORMAT ###\nReturn ONLY the final Nano Banana prompt as a single continuous paragraph — no headers, \nno bullet points, no explanation, no preamble. This output will be piped directly into \nthe image generation API call. ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        -944
+      ],
+      "id": "35168d56-3585-4f91-bdb2-19f5c7f51329",
+      "name": "E comm",
+      "credentials": {
+        "ollamaApi": {
+          "id": "MM98DJ4WoWNQ31fs",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1216,
+        -112
+      ],
+      "id": "8c7b321a-726e-4fce-a82c-cc17d0986e11",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4",
+          "mode": "list",
+          "cachedResultName": "Raw to Promotable",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 496118043,
+          "mode": "list",
+          "cachedResultName": "Details to Prompt",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Bw-QuQeQv5sHaB7jHjBUyv3mI8ySOA0c0xbObwt7Qu4/edit#gid=496118043"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Gen ID": "={{ $('On form submission').item.json.submittedAt }}",
+            "E Commerce": "={{ $json['E Commerce'] }}",
+            "Professional Studio": "={{ $json['Professional Studio'] }}",
+            "Use Case": "={{ $json['Use Case'] }}",
+            "Aspirational Lifestyle": "={{ $json['Aspirational Lifestyle'] }}",
+            "Festive Context": "={{ $json['Festive Context'] }}",
+            "Ingredient Story Shot": "={{ $json['Ingredient Story Shot'] }}",
+            "Transformation Shot": "={{ $json['Transformation Shot'] }}",
+            "Scale Reference": "={{ $json['Scale Reference'] }}",
+            "UGC Style": "={{ $json['UGC Style'] }}",
+            "Complementary Context Shot": "={{ $json['Complementary Context Shot'] }}",
+            "Product description": "={{ $('On form submission').item.json.Description }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Gen ID",
+              "displayName": "Gen ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Product description",
+              "displayName": "Product description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "E Commerce",
+              "displayName": "E Commerce",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Professional Studio",
+              "displayName": "Professional Studio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Use Case",
+              "displayName": "Use Case",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Aspirational Lifestyle",
+              "displayName": "Aspirational Lifestyle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Festive Context",
+              "displayName": "Festive Context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Ingredient Story Shot",
+              "displayName": "Ingredient Story Shot",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Transformation Shot",
+              "displayName": "Transformation Shot",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Scale Reference",
+              "displayName": "Scale Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "UGC Style",
+              "displayName": "UGC Style",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Complementary Context Shot",
+              "displayName": "Complementary Context Shot",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16,
+        -128
+      ],
+      "id": "b92a3eed-0c42-4b48-92da-ecb132c331a3",
+      "name": "Append row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "HRfJ46tRP9RjBza4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 10,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -368,
+        -256
+      ],
+      "id": "c2ff77d3-5240-4c13-8b57-5c2101f29ba1",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "119039de-84af-4f23-af8d-b84309949b5a",
+              "name": "E Commerce",
+              "value": "={{ $(\"E comm\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "0ba38fbe-eb5d-44c8-afd4-445c5eb132ba",
+              "name": "Professional Studio",
+              "value": "={{ $(\"Professional Shot\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "0e5effea-3552-4043-9569-762ed9e10592",
+              "name": "Use Case",
+              "value": "={{ $(\"Use Case Shot\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "396e0ccc-73a2-4d8b-8cd6-4a07bb46b6f4",
+              "name": "Aspirational Lifestyle",
+              "value": "={{ $(\"Aspirational Style\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "759c787f-2431-415c-a0e2-42f85f63efbb",
+              "name": "Festive Context",
+              "value": "={{ $(\"Festive\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "35e21654-f11c-4deb-b2d8-6126acccba41",
+              "name": "Ingredient Story Shot",
+              "value": "={{ $(\"Ingredient STory\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "7563ae95-0c22-4200-9e29-ac8ee2c123be",
+              "name": "Transformation Shot",
+              "value": "={{ $(\"Transformation\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "b5ffb286-7d9d-4f0c-890b-f5b93e0500cb",
+              "name": "Scale Reference",
+              "value": "={{ $(\"Scale reference\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "46d445ea-5a2d-4586-93bb-9fbdb370d48a",
+              "name": "UGC Style",
+              "value": "={{ $(\"UGC Style\").first().json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "7ec4e26e-9e7e-44a3-a9ad-39f3ba598a0f",
+              "name": "Complementary Context Shot",
+              "value": "={{ $(\"Complementary shot\").first().json.content }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -176,
+        -128
+      ],
+      "id": "104d79e4-d37b-45dd-827d-81e22119f5ac",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        224,
+        112
+      ],
+      "id": "42eb76c7-7e1a-4436-a2be-62cec342905e",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['E Commerce'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -688
+      ],
+      "id": "86bbcf41-1b5a-4b1a-b601-85661a57e063",
+      "name": "E comm img",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Professional Studio'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -496
+      ],
+      "id": "21f95ea0-a996-47a7-9065-6d0afd6272f1",
+      "name": "Professional Shot Img",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Use Case'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -304
+      ],
+      "id": "9c08d3d8-bbf0-42f4-90d2-333475e2ffd8",
+      "name": "Use Case Shot2",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Aspirational Lifestyle'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -112
+      ],
+      "id": "e1a1a993-8aa5-41f1-bd23-9057e8c44a75",
+      "name": "Aspirational Lifestyle Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Festive Context'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        80
+      ],
+      "id": "11eac3dd-c686-44e1-a2c4-80889da6f89b",
+      "name": "Festive Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Ingredient Story Shot'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        272
+      ],
+      "id": "49114ccf-55ec-4d9f-8fb9-5b520b726cbb",
+      "name": "Ingredient Story Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Transformation Shot'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        464
+      ],
+      "id": "04c44759-cfc6-4f26-a4ed-ff6b6cba2377",
+      "name": "Transformation Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Scale Reference'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        656
+      ],
+      "id": "24d63ca2-c099-4f6f-991e-1e1561ec6ca5",
+      "name": "Scale Reference Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['Complementary Context Shot'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        848
+      ],
+      "id": "38b702e4-88c4-494e-abab-9b3d9ec710ea",
+      "name": "Complementary Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "edit",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1.5",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1.5"
+        },
+        "prompt": "={{ $json['UGC Style'] }}",
+        "images": {
+          "values": [
+            {}
+          ]
+        },
+        "size": "auto",
+        "quality": "medium",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        1040
+      ],
+      "id": "bbdbe72d-f18c-417c-b6c2-c4c8ccf1f81f",
+      "name": "UGC Style Shot",
+      "credentials": {
+        "openAiApi": {
+          "id": "QNGqvMeF10GJWUgE",
+          "name": "OpenAI account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Analyze an image",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Analyze an image": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Professional Shot": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Use Case Shot": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Aspirational Style": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Festive": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Ingredient STory": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Transformation": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 6
+          }
+        ]
+      ]
+    },
+    "Scale reference": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 7
+          }
+        ]
+      ]
+    },
+    "Complementary shot": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 8
+          }
+        ]
+      ]
+    },
+    "UGC Style": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 9
+          }
+        ]
+      ]
+    },
+    "E comm": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "E comm",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Professional Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Use Case Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aspirational Style",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Festive",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ingredient STory",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Transformation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scale reference",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "UGC Style",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Complementary shot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "E comm img",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Professional Shot Img",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aspirational Lifestyle Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Use Case Shot2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Festive Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ingredient Story Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Transformation Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Scale Reference Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Complementary Shot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "UGC Style Shot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E comm img": {
+      "main": [
+        []
+      ]
+    },
+    "Professional Shot Img": {
+      "main": [
+        []
+      ]
+    },
+    "Use Case Shot2": {
+      "main": [
+        []
+      ]
+    },
+    "Festive Shot": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "73aa2a7a-38ee-40bc-a915-bdd7250abb43",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "558d88703fb65b2d0e44613bc35916258b0f0bf983c5d4730c00c424b77ca36a"
+  },
+  "nodeGroups": [],
+  "id": "ixiRPicW833yDZXZ",
+  "tags": []
+}

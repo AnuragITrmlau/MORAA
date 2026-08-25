@@ -1,0 +1,2 @@
+Create an e-commerce main image of the reference product.
+Preserve the exact product shown in the reference image.

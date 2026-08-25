@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Build outputs
+dist/
+build/
+
+# Testing
+coverage/
+
+# Cache
+.cache/
+.turbo/
+
+# Vercel
+.vercel/
+
+# Environment files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Windows reserved device names (can cause Turbopack panics)
+nul
+CON
+PRN
+AUX
+COM1
+COM2
+LPT1
+LPT2
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.vercel

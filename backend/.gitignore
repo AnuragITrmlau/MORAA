@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite3
+data/
+
+# Uploads
+app/uploads/*
+!app/uploads/.gitkeep
+
+# Reports
+app/reports/*
+!app/reports/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# Distribution
+dist/
+build/
+*.whl
+
+# Logs
+*.log
+logs/
