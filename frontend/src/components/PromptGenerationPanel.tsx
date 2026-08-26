@@ -31,7 +31,9 @@ import {
 } from "@/types/prompts";
 import { generatePromptsFromAnalysis } from "@/services/prompt-generation.service";
 import { generateImage } from "@/services/image-generation.service";
+import { getCleanVisualPrompt } from "@/services/promotional-prompts";
 import { generateEarringEcommercePrompt, type EarringType } from "@/services/earring-ecommerce.service";
+import { generateCloseUpEarsPrompt } from "@/services/earring-close-up-ears.service";
 import type { AnalysisResult } from "@/types/analysis";
 import type { ImageGenerationState } from "@/types/image-generation";
 import { logger } from "@/lib/logger";
@@ -304,19 +306,22 @@ function PromptCard({
   category,
   prompt,
   index,
-  onGenerateImage,
-  isGeneratingImage,
+  imageState,
+  onGenerate,
 }: {
   category: PromptCategory;
   prompt: string;
   index: number;
-  onGenerateImage?: (prompt: string, category: PromptCategory) => void;
-  isGeneratingImage?: boolean;
+  imageState: ImageGenerationState;
+  onGenerate: (prompt: string, category: PromptCategory) => void;
 }) {
   const Icon = CATEGORY_ICONS[category];
   const color = CATEGORY_COLORS[category];
   const label = PROMPT_CATEGORY_LABELS[category];
   const description = PROMPT_CATEGORY_DESCRIPTIONS[category];
+  const isGenerating = imageState.status === "generating";
+  const hasImage = imageState.status === "completed" && imageState.imageUrl;
+  const isError = imageState.status === "error";
 
   return (
     <motion.div
@@ -361,18 +366,16 @@ function PromptCard({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {onGenerateImage && (
-              <button
-                onClick={() => onGenerateImage(prompt, category)}
-                disabled={isGeneratingImage}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ color: "var(--theme-text-secondary)" }}
-                title={isGeneratingImage ? "Currently generating..." : "Generate image from this prompt"}
-              >
-                <ImageIcon size={12} />
-                Generate
-              </button>
-            )}
+            <button
+              onClick={() => onGenerate(prompt, category)}
+              disabled={isGenerating}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ color: isGenerating ? color : "var(--theme-text-secondary)" }}
+              title={isGenerating ? "Currently generating..." : "Generate image from this prompt"}
+            >
+              <ImageIcon size={12} />
+              {isGenerating ? "Generating..." : "Generate"}
+            </button>
             <CopyButton text={prompt} />
           </div>
         </div>
@@ -388,6 +391,71 @@ function PromptCard({
         >
           {prompt}
         </div>
+
+        {/* Loading State */}
+        {isGenerating && (
+          <div className="mt-4 flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+            <div className="relative">
+              <div
+                className="h-12 w-12 rounded-full border-[3px] animate-spin"
+                style={{ borderColor: "var(--theme-border)", borderTopColor: color }}
+              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ImageIcon size={16} style={{ color }} />
+              </div>
+            </div>
+            <p className="mt-3 text-xs font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+              Generating {label} image...
+            </p>
+          </div>
+        )}
+
+        {/* Generated Image */}
+        {hasImage && (
+          <div className="mt-4 space-y-3">
+            <div className="relative group mx-auto w-full max-w-[560px]">
+              <div className="relative overflow-hidden rounded-xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageState.imageUrl!}
+                  alt={`${label} generated image`}
+                  className="w-full object-contain"
+                  style={{ maxHeight: "480px", minHeight: "200px" }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                <Clock size={10} className="inline mr-1" />
+                {imageState.generationTime.toFixed(1)}s · {imageState.provider}
+              </span>
+              {imageState.fallbackUsed && imageState.fallbackReason && (
+                <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                  Fallback: {imageState.fallbackReason}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Error State */}
+        {isError && (
+          <div className="mt-4 flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+            <AlertTriangle size={14} className="text-red-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-medium text-red-400/90">Generation Failed</p>
+              <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                {imageState.errorMessage}
+              </p>
+            </div>
+            <button
+              onClick={() => onGenerate(prompt, category)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200 shrink-0"
+            >
+              <RefreshCw size={10} /> Retry
+            </button>
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -437,8 +505,8 @@ export default function PromptGenerationPanel({
   const [ecommercePreview, setEcommercePreview] = useState<"before" | "after">("after");
   const [ecommerceDownloaded, setEcommerceDownloaded] = useState(false);
 
-  // Image generation state
-  const [imageState, setImageState] = useState<ImageGenerationState>({
+  // Close Up Ears generation state (Prompt 2)
+  const [closeUpEarsState, setCloseUpEarsState] = useState<ImageGenerationState>({
     status: "idle",
     imageUrl: null,
     provider: "",
@@ -447,8 +515,29 @@ export default function PromptGenerationPanel({
     generationTime: 0,
     errorMessage: null,
   });
-  const [selectedCategory, setSelectedCategory] = useState<PromptCategory | null>(null);
-  const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
+  const [closeUpEarsPreview, setCloseUpEarsPreview] = useState<"before" | "after">("after");
+  const [closeUpEarsDownloaded, setCloseUpEarsDownloaded] = useState(false);
+
+  // Promotional image generation state — independent per card
+  const defaultCardState = (): ImageGenerationState => ({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [promotionalImages, setPromotionalImages] = useState<Record<PromptCategory, ImageGenerationState>>({
+    professionalShot: defaultCardState(),
+    useCaseShot: defaultCardState(),
+    ingredientStory: defaultCardState(),
+    festive: defaultCardState(),
+    transformation: defaultCardState(),
+    scaleReference: defaultCardState(),
+    complementaryShot: defaultCardState(),
+    ugcStyle: defaultCardState(),
+  });
 
   // NOTE: setState updaters must stay pure — React may invoke them during the
   // render phase. The onStateChange notification is therefore fired from an
@@ -573,79 +662,95 @@ export default function PromptGenerationPanel({
     }
   }, [state.prompts]);
 
-  // ── Image Generation (Gemini prompt → ChatGPT image, Gemini fallback) ──
+  // ── Promotional Image Generation (per-card independent state) ──
 
-  const handleGenerateImage = useCallback(async (prompt: string, category: PromptCategory) => {
-    // Prevent duplicate API calls while already generating
-    if (imageState.status === "generating") return;
+  const handlePromotionalGenerate = useCallback(async (prompt: string, category: PromptCategory) => {
+    // Prevent duplicate API calls for this specific card
+    if (promotionalImages[category].status === "generating") return;
 
-    setSelectedCategory(category);
-    setSelectedPrompt(prompt);
-
-    setImageState({
-      status: "generating",
-      imageUrl: null,
-      provider: "openai",
-      fallbackUsed: false,
-      fallbackReason: null,
-      generationTime: 0,
-      errorMessage: null,
-    });
-
-    try {
-      // The prompt comes ONLY from the Gemini-driven structured prompt
-      // generation (analysis → category prompt). No fusion / no merging.
-      // The backend auto-appends the reference-priority preservation
-      // block and routes OpenAI (gpt-image-1, primary) → Gemini (fallback).
-      const refMime = mimeType || "image/jpeg";
-      const result = await generateImage({
-        prompt,
-        aspectRatio: "4:5",
-        referenceImage: imageBase64 ? `data:${refMime};base64,${imageBase64}` : undefined,
-        referenceMimeType: refMime,
-        marketplace: "amazon_india_fashion_earrings",
-      });
-
-      if (result.success && result.image_url) {
-        setImageState({
-          status: "completed",
-          imageUrl: result.image_url,
-          provider: result.provider,
-          fallbackUsed: result.fallback_used,
-          fallbackReason: result.fallback_reason ?? null,
-          generationTime: result.generation_time,
-          errorMessage: null,
-        });
-      } else {
-        setImageState({
-          status: "error",
-          imageUrl: null,
-          provider: result.provider,
-          fallbackUsed: result.fallback_used,
-          fallbackReason: result.fallback_reason ?? null,
-          generationTime: result.generation_time,
-          errorMessage: result.error || "Image generation failed",
-        });
-      }
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setImageState({
-        status: "error",
+    setPromotionalImages((prev) => ({
+      ...prev,
+      [category]: {
+        status: "generating",
         imageUrl: null,
-        provider: "none",
+        provider: "openai",
         fallbackUsed: false,
         fallbackReason: null,
         generationTime: 0,
-        errorMessage: errMsg,
-      });
-    }
-  }, [imageState.status, imageBase64, mimeType]);
+        errorMessage: null,
+      },
+    }));
 
-  const handleRegenerate = useCallback(() => {
-    if (selectedPrompt) {
-      handleGenerateImage(selectedPrompt, selectedCategory || "professionalShot");
+    try {
+      // PREFERRED: Use Prompt 1 clean e-commerce output as product reference
+      // FALLBACK: Use raw uploaded reference if Prompt 1 hasn't been run yet
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+
+      // Use the clean visual prompt compiler — strips marketing metadata
+      // and produces visually actionable instructions for the image model
+      const productIdentity = state.workflowAnalysis?.productIdentity || "jewelry earring";
+      const cleanPrompt = getCleanVisualPrompt(category, productIdentity);
+
+      // NOTE: NO marketplace overlay — the Amazon India presentation rules
+      // enforce pure white background, no human model, and isolated product
+      // which directly contradicts the promotional scene compositions.
+      const result = await generateImage({
+        prompt: cleanPrompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        // marketplace: intentionally omitted — promotional scenes require
+        // lifestyle, workshop, festive, and UGC compositions that the
+        // Amazon e-commerce rules would override.
+      });
+
+      if (result.success && result.image_url) {
+        setPromotionalImages((prev) => ({
+          ...prev,
+          [category]: {
+            status: "completed",
+            imageUrl: result.image_url,
+            provider: result.provider,
+            fallbackUsed: result.fallback_used,
+            fallbackReason: result.fallback_reason ?? null,
+            generationTime: result.generation_time,
+            errorMessage: null,
+          },
+        }));
+      } else {
+        setPromotionalImages((prev) => ({
+          ...prev,
+          [category]: {
+            status: "error",
+            imageUrl: null,
+            provider: result.provider,
+            fallbackUsed: result.fallback_used,
+            fallbackReason: result.fallback_reason ?? null,
+            generationTime: result.generation_time,
+            errorMessage: result.error || "Image generation failed",
+          },
+        }));
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setPromotionalImages((prev) => ({
+        ...prev,
+        [category]: {
+          status: "error",
+          imageUrl: null,
+          provider: "none",
+          fallbackUsed: false,
+          fallbackReason: null,
+          generationTime: 0,
+          errorMessage: errMsg,
+        },
+      }));
     }
-  }, [selectedPrompt, selectedCategory, handleGenerateImage]);
+  }, [promotionalImages, imageBase64, mimeType, ecommerceState.imageUrl, state.workflowAnalysis]);
 
   // ── Earring E-Commerce Image Generation ────────────────────────────
 
@@ -734,6 +839,100 @@ export default function PromptGenerationPanel({
       logger.error("Failed to download earring e-commerce image", { error: String(err) });
     }
   }, [ecommerceState.imageUrl]);
+
+  // ── Close Up Ears Image Generation (Prompt 2) ──────────────────────
+
+  const handleCloseUpEarsGenerate = useCallback(async () => {
+    if (closeUpEarsState.status === "generating") return;
+
+    setCloseUpEarsState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+    });
+
+    try {
+      // Step 1: Get the Close Up Ears prompt from Prompt 2 backend
+      const prompt = await generateCloseUpEarsPrompt();
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // because Prompt 1 already produced a cleaned/standardized representation.
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        // NOTE: No marketplace overlay — the Amazon India presentation rules
+        // enforce pure white background / standalone product which directly
+        // contradicts the on-ear composition required by Prompt 2.
+      });
+
+      if (result.success && result.image_url) {
+        setCloseUpEarsState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+        });
+      } else {
+        setCloseUpEarsState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "Close Up Ears image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setCloseUpEarsState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [closeUpEarsState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleCloseUpEarsDownload = useCallback(async () => {
+    if (!closeUpEarsState.imageUrl) return;
+
+    try {
+      const response = await fetch(closeUpEarsState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-close-up-ears.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setCloseUpEarsDownloaded(true);
+      setTimeout(() => setCloseUpEarsDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download Close Up Ears image", { error: String(err) });
+    }
+  }, [closeUpEarsState.imageUrl]);
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -1047,40 +1246,162 @@ export default function PromptGenerationPanel({
             </div>
           </motion.div>
 
-          {/* Generated Image Display (from promotional prompts) */}
-          {(imageState.status === "generating" || imageState.status === "completed" || imageState.status === "error") && (
-            <motion.div variants={itemVariants}>
-              <GeneratedImageDisplay
-                imageState={imageState}
-                selectedCategory={selectedCategory}
-                selectedPrompt={selectedPrompt}
-                onRegenerate={handleRegenerate}
-              />
-            </motion.div>
-          )}
+          {/* ── Close Up Ears Image Generation (Prompt 2) ──────────────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border border-blue-500/10">
+                  <Eye size={15} className="text-blue-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    Close Up Ears
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    On-ear close-up — the exact earring naturally worn on a woman's ear
+                  </p>
+                </div>
+              </div>
 
-          {/* Post-Generation Photo Filters — TEMPORARILY HIDDEN (Task 4: focus on earring e-commerce workflow)
-              Filter implementation, state, logic, service, and API remain fully intact.
-              To re-enable: uncomment the block below. */}
-          {/*
-          {imageState.status === "completed" && imageState.imageUrl && (
-            <motion.div variants={itemVariants}>
-              <PhotoFilterPanel
-                originalImageUrl={imageState.imageUrl}
-              />
-            </motion.div>
-          )}
-          */}
+              {/* Generate Button */}
+              {closeUpEarsState.status === "idle" && (
+                <button
+                  onClick={handleCloseUpEarsGenerate}
+                  disabled={!imageBase64}
+                  className="group relative flex items-center gap-2.5 rounded-xl px-5 py-2.5 text-xs font-semibold text-white overflow-hidden transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_20px_rgba(59,130,246,0.2)] hover:shadow-[0_4px_28px_rgba(59,130,246,0.3)]"
+                  style={{ background: "linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)" }}
+                >
+                  <span className="absolute inset-0 rounded-xl pointer-events-none" style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.12) 0%, transparent 50%)" }} />
+                  <span className="relative z-10 flex items-center gap-2">
+                    <Eye size={14} className="transition-all duration-300 group-hover:scale-110" />
+                    Generate Close Up Ears
+                  </span>
+                </button>
+              )}
 
-          {/* Prompt Cards */}
+              {/* Loading State */}
+              {closeUpEarsState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#3B82F6" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Eye size={18} className="text-blue-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating Close Up Ears image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    Prompt 2 — using product reference image
+                  </p>
+                </div>
+              )}
+
+              {/* Result */}
+              {closeUpEarsState.status === "completed" && closeUpEarsState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setCloseUpEarsPreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: closeUpEarsPreview === "before" && imageBase64 ? "#3B82F6" : "transparent",
+                          color: closeUpEarsPreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setCloseUpEarsPreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: closeUpEarsPreview === "after" ? "#3B82F6" : "transparent",
+                          color: closeUpEarsPreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleCloseUpEarsDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: closeUpEarsDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {closeUpEarsDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={closeUpEarsPreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : closeUpEarsState.imageUrl}
+                        alt={closeUpEarsPreview === "before" ? "Original uploaded earring reference" : "Close Up Ears generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {closeUpEarsState.generationTime.toFixed(1)}s
+                    </span>
+                    {closeUpEarsState.fallbackUsed && closeUpEarsState.fallbackReason && (
+                      <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                        Fallback: {closeUpEarsState.fallbackReason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-blue-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Close Up Ears:</span>{" "}
+                      Generated using Prompt 2 — the exact reference earring naturally worn on a woman's ear in a tight close-up with product fidelity as highest priority.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={handleCloseUpEarsGenerate}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* Error */}
+              {closeUpEarsState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">Close Up Ears Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {closeUpEarsState.errorMessage}
+                  </p>
+                  <button
+                    onClick={handleCloseUpEarsGenerate}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Prompt Cards — each with independent image state */}
           {PROMPT_CATEGORIES.map((category, index) => (
             <PromptCard
               key={category}
               category={category}
               prompt={state.prompts![category]}
               index={index}
-              onGenerateImage={handleGenerateImage}
-              isGeneratingImage={imageState.status === "generating"}
+              imageState={promotionalImages[category]}
+              onGenerate={handlePromotionalGenerate}
             />
           ))}
 
