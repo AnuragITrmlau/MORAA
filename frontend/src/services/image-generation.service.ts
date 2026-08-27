@@ -41,6 +41,44 @@ export async function generateImage(
       }),
     });
 
+    // Check for HTTP errors before parsing JSON
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try {
+        const errorBody = await response.json();
+        detail = errorBody.detail || errorBody.error || detail;
+      } catch {
+        // Response body may not be JSON — use status text
+        detail = response.statusText || detail;
+      }
+
+      const category =
+        response.status === 404
+          ? "Endpoint not found"
+          : response.status === 422
+            ? "Invalid request"
+            : response.status >= 500
+              ? "Image provider unavailable"
+              : `Request failed (${response.status})`;
+
+      logger.error("Image generation HTTP error", {
+        requestId,
+        status: response.status,
+        detail,
+        totalTime: Date.now() - startTime,
+      });
+
+      return {
+        success: false,
+        provider: "none",
+        fallback_used: false,
+        fallback_reason: null,
+        image_url: null,
+        generation_time: 0,
+        error: `${category}: ${detail}`,
+      };
+    }
+
     const result: GenerateImageResponse = await response.json();
 
     if (result.success) {
@@ -62,6 +100,9 @@ export async function generateImage(
     return result;
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    const isNetworkError = errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError");
+    const category = isNetworkError ? "Backend unavailable" : "Image generation error";
+
     logger.error("Image generation network error", {
       requestId,
       error: errMsg,
@@ -74,7 +115,7 @@ export async function generateImage(
       fallback_reason: null,
       image_url: null,
       generation_time: 0,
-      error: `Failed to connect to image generation service: ${errMsg}`,
+      error: `${category}: ${errMsg}`,
     };
   }
 }

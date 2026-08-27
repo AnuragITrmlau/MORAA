@@ -34,6 +34,7 @@ import { generateImage } from "@/services/image-generation.service";
 import { getCleanVisualPrompt } from "@/services/promotional-prompts";
 import { generateEarringEcommercePrompt, type EarringType } from "@/services/earring-ecommerce.service";
 import { generateCloseUpEarsPrompt } from "@/services/earring-close-up-ears.service";
+import { generateScaleReferencePrompt } from "@/services/earring-scale-reference.service";
 import type { AnalysisResult } from "@/types/analysis";
 import type { ImageGenerationState } from "@/types/image-generation";
 import { logger } from "@/lib/logger";
@@ -518,6 +519,20 @@ export default function PromptGenerationPanel({
   const [closeUpEarsPreview, setCloseUpEarsPreview] = useState<"before" | "after">("after");
   const [closeUpEarsDownloaded, setCloseUpEarsDownloaded] = useState(false);
 
+  // Scale Reference generation state (Prompt 3)
+  const [scaleRefState, setScaleRefState] = useState<ImageGenerationState>({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [scaleRefEarringType, setScaleRefEarringType] = useState<EarringType | null>(null);
+  const [scaleRefPreview, setScaleRefPreview] = useState<"before" | "after">("after");
+  const [scaleRefDownloaded, setScaleRefDownloaded] = useState(false);
+
   // Promotional image generation state — independent per card
   const defaultCardState = (): ImageGenerationState => ({
     status: "idle",
@@ -933,6 +948,103 @@ export default function PromptGenerationPanel({
       logger.error("Failed to download Close Up Ears image", { error: String(err) });
     }
   }, [closeUpEarsState.imageUrl]);
+
+  // ── Scale Reference Image Generation (Prompt 3) ─────────────────────
+
+  const handleScaleRefGenerate = useCallback(async (earringType?: EarringType) => {
+    if (scaleRefState.status === "generating") return;
+
+    setScaleRefEarringType(earringType || null);
+    setScaleRefState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+    });
+
+    try {
+      // Step 1: Get the Scale Reference prompt from Prompt 3 backend
+      const prompt = await generateScaleReferencePrompt({
+        earringType: earringType || undefined,
+      });
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        // NOTE: No marketplace overlay — the Amazon India presentation rules
+        // enforce pure white background which aligns with scale reference,
+        // but the hand composition may conflict. Omit to let the prompt
+        // control the scene.
+      });
+
+      if (result.success && result.image_url) {
+        setScaleRefState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+        });
+      } else {
+        setScaleRefState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "Scale Reference image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setScaleRefState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [scaleRefState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleScaleRefDownload = useCallback(async () => {
+    if (!scaleRefState.imageUrl) return;
+
+    try {
+      const response = await fetch(scaleRefState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-scale-reference.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setScaleRefDownloaded(true);
+      setTimeout(() => setScaleRefDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download Scale Reference image", { error: String(err) });
+    }
+  }, [scaleRefState.imageUrl]);
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -1384,6 +1496,171 @@ export default function PromptGenerationPanel({
                   </p>
                   <button
                     onClick={handleCloseUpEarsGenerate}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── Scale Reference Image Generation (Prompt 3) ──────────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500/20 to-teal-500/20 border border-cyan-500/10">
+                  <Ruler size={15} className="text-cyan-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    Scale Reference
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    Scale reference — the exact earring with one natural human hand for physical scale
+                  </p>
+                </div>
+              </div>
+
+              {/* Earring Type Selection */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Earring Type:
+                </span>
+                {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleScaleRefGenerate(type)}
+                    disabled={scaleRefState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: scaleRefEarringType === type ? "#06B6D4" : "var(--theme-border)",
+                      backgroundColor: scaleRefEarringType === type ? "#06B6D4/15" : "var(--theme-muted)",
+                      color: scaleRefEarringType === type ? "#06B6D4" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {type}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleScaleRefGenerate()}
+                  disabled={scaleRefState.status === "generating"}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: !scaleRefEarringType ? "#06B6D4" : "var(--theme-border)",
+                    backgroundColor: !scaleRefEarringType ? "#06B6D4/15" : "var(--theme-muted)",
+                    color: !scaleRefEarringType ? "#06B6D4" : "var(--theme-text-secondary)",
+                  }}
+                >
+                  Auto-detect
+                </button>
+              </div>
+
+              {/* Scale Reference Loading State */}
+              {scaleRefState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#06B6D4" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Ruler size={18} className="text-cyan-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating scale reference image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    {scaleRefEarringType ? `${scaleRefEarringType} earring` : "Auto-detecting earring type"} — using AI
+                  </p>
+                </div>
+              )}
+
+              {/* Scale Reference Result */}
+              {scaleRefState.status === "completed" && scaleRefState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setScaleRefPreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: scaleRefPreview === "before" && imageBase64 ? "#06B6D4" : "transparent",
+                          color: scaleRefPreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setScaleRefPreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: scaleRefPreview === "after" ? "#06B6D4" : "transparent",
+                          color: scaleRefPreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleScaleRefDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: scaleRefDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {scaleRefDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={scaleRefPreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : scaleRefState.imageUrl}
+                        alt={scaleRefPreview === "before" ? "Original uploaded earring reference" : "Scale Reference generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {scaleRefState.generationTime.toFixed(1)}s
+                    </span>
+                    {scaleRefState.fallbackUsed && scaleRefState.fallbackReason && (
+                      <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                        Fallback: {scaleRefState.fallbackReason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-cyan-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Scale Reference:</span>{" "}
+                      Generated using Prompt 3 — the exact reference earring shown with one natural human hand as a scale reference on a pure white background, with product fidelity as highest priority.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={() => handleScaleRefGenerate(scaleRefEarringType || undefined)}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* Scale Reference Error */}
+              {scaleRefState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">Scale Reference Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {scaleRefState.errorMessage}
+                  </p>
+                  <button
+                    onClick={() => handleScaleRefGenerate(scaleRefEarringType || undefined)}
                     className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
                   >
                     <RefreshCw size={10} /> Try Again

@@ -14,7 +14,7 @@ class ImageGenerationRequest(BaseModel):
     """Request to generate an image from a text prompt."""
 
     prompt: str = Field(
-        ..., min_length=1, max_length=15000,
+        ..., min_length=1, max_length=20000,
         description="Text prompt for image generation (from prompt generation pipeline)",
     )
     aspect_ratio: str = Field(
