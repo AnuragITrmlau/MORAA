@@ -35,6 +35,8 @@ import { getCleanVisualPrompt } from "@/services/promotional-prompts";
 import { generateEarringEcommercePrompt, type EarringType } from "@/services/earring-ecommerce.service";
 import { generateCloseUpEarsPrompt } from "@/services/earring-close-up-ears.service";
 import { generateScaleReferencePrompt } from "@/services/earring-scale-reference.service";
+import { generateProfessionalShotPrompt } from "@/services/earring-professional-shot.service";
+import { generateComplementaryShotPrompt } from "@/services/earring-complementary-shot.service";
 import type { AnalysisResult } from "@/types/analysis";
 import type { ImageGenerationState } from "@/types/image-generation";
 import { logger } from "@/lib/logger";
@@ -532,6 +534,34 @@ export default function PromptGenerationPanel({
   const [scaleRefEarringType, setScaleRefEarringType] = useState<EarringType | null>(null);
   const [scaleRefPreview, setScaleRefPreview] = useState<"before" | "after">("after");
   const [scaleRefDownloaded, setScaleRefDownloaded] = useState(false);
+
+  // Professional Shot generation state (Prompt 4)
+  const [professionalShotState, setProfessionalShotState] = useState<ImageGenerationState>({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [professionalShotEarringType, setProfessionalShotEarringType] = useState<EarringType | null>(null);
+  const [professionalShotPreview, setProfessionalShotPreview] = useState<"before" | "after">("after");
+  const [professionalShotDownloaded, setProfessionalShotDownloaded] = useState(false);
+
+  // Complementary Shot generation state (Prompt 5)
+  const [complementaryShotState, setComplementaryShotState] = useState<ImageGenerationState>({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [complementaryShotEarringType, setComplementaryShotEarringType] = useState<EarringType | null>(null);
+  const [complementaryShotPreview, setComplementaryShotPreview] = useState<"before" | "after">("after");
+  const [complementaryShotDownloaded, setComplementaryShotDownloaded] = useState(false);
 
   // Promotional image generation state — independent per card
   const defaultCardState = (): ImageGenerationState => ({
@@ -1045,6 +1075,198 @@ export default function PromptGenerationPanel({
       logger.error("Failed to download Scale Reference image", { error: String(err) });
     }
   }, [scaleRefState.imageUrl]);
+
+  // ── Professional Shot Image Generation (Prompt 4) ──────────────
+
+  const handleProfessionalShotGenerate = useCallback(async (earringType?: EarringType) => {
+    if (professionalShotState.status === "generating") return;
+
+    setProfessionalShotEarringType(earringType || null);
+    setProfessionalShotState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+    });
+
+    try {
+      // Step 1: Get the Professional Shot prompt from Prompt 4 backend
+      const prompt = await generateProfessionalShotPrompt({
+        earringType: earringType || undefined,
+      });
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        // NOTE: No marketplace overlay — the Amazon India presentation rules
+        // are compatible with pure white background, but we let the prompt
+        // control the scene for maximum fidelity.
+      });
+
+      if (result.success && result.image_url) {
+        setProfessionalShotState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+        });
+      } else {
+        setProfessionalShotState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "Professional Shot image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setProfessionalShotState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [professionalShotState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleProfessionalShotDownload = useCallback(async () => {
+    if (!professionalShotState.imageUrl) return;
+
+    try {
+      const response = await fetch(professionalShotState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-professional-shot.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setProfessionalShotDownloaded(true);
+      setTimeout(() => setProfessionalShotDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download professional shot image", { error: String(err) });
+    }
+  }, [professionalShotState.imageUrl]);
+
+  // ── Complementary Shot Image Generation (Prompt 5) ──────────────
+
+  const handleComplementaryShotGenerate = useCallback(async (earringType?: EarringType) => {
+    if (complementaryShotState.status === "generating") return;
+
+    setComplementaryShotEarringType(earringType || null);
+    setComplementaryShotState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+    });
+
+    try {
+      // Step 1: Get the Complementary Shot prompt from Prompt 5 backend
+      const prompt = await generateComplementaryShotPrompt({
+        earringType: earringType || undefined,
+      });
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        // NOTE: No marketplace overlay — the Amazon India presentation rules
+        // enforce pure white background which conflicts with editorial staging.
+        // Let the prompt control the scene for maximum fidelity.
+      });
+
+      if (result.success && result.image_url) {
+        setComplementaryShotState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+        });
+      } else {
+        setComplementaryShotState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "Complementary Shot image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setComplementaryShotState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [complementaryShotState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleComplementaryShotDownload = useCallback(async () => {
+    if (!complementaryShotState.imageUrl) return;
+
+    try {
+      const response = await fetch(complementaryShotState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-complementary-shot.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setComplementaryShotDownloaded(true);
+      setTimeout(() => setComplementaryShotDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download complementary shot image", { error: String(err) });
+    }
+  }, [complementaryShotState.imageUrl]);
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -1661,6 +1883,336 @@ export default function PromptGenerationPanel({
                   </p>
                   <button
                     onClick={() => handleScaleRefGenerate(scaleRefEarringType || undefined)}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── Professional Shot Image Generation (Prompt 4) ──────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-500/20 border border-violet-500/10">
+                  <Camera size={15} className="text-violet-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    Professional Shot
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    Professional hero/catalog e-commerce image — product only, pure white background
+                  </p>
+                </div>
+              </div>
+
+              {/* Earring Type Selection */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Earring Type:
+                </span>
+                {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleProfessionalShotGenerate(type)}
+                    disabled={professionalShotState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: professionalShotEarringType === type ? "#8B5CF6" : "var(--theme-border)",
+                      backgroundColor: professionalShotEarringType === type ? "#8B5CF6/15" : "var(--theme-muted)",
+                      color: professionalShotEarringType === type ? "#8B5CF6" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {type}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleProfessionalShotGenerate()}
+                  disabled={professionalShotState.status === "generating"}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: !professionalShotEarringType ? "#8B5CF6" : "var(--theme-border)",
+                    backgroundColor: !professionalShotEarringType ? "#8B5CF6/15" : "var(--theme-muted)",
+                    color: !professionalShotEarringType ? "#8B5CF6" : "var(--theme-text-secondary)",
+                  }}
+                >
+                  Auto-detect
+                </button>
+              </div>
+
+              {/* Professional Shot Loading State */}
+              {professionalShotState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#8B5CF6" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Camera size={18} className="text-violet-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating professional shot image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    {professionalShotEarringType ? `${professionalShotEarringType} earring` : "Auto-detecting earring type"} — using AI
+                  </p>
+                </div>
+              )}
+
+              {/* Professional Shot Result */}
+              {professionalShotState.status === "completed" && professionalShotState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setProfessionalShotPreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: professionalShotPreview === "before" && imageBase64 ? "#8B5CF6" : "transparent",
+                          color: professionalShotPreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setProfessionalShotPreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: professionalShotPreview === "after" ? "#8B5CF6" : "transparent",
+                          color: professionalShotPreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleProfessionalShotDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: professionalShotDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {professionalShotDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={professionalShotPreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : professionalShotState.imageUrl}
+                        alt={professionalShotPreview === "before" ? "Original uploaded earring reference" : "Professional Shot generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {professionalShotState.generationTime.toFixed(1)}s
+                    </span>
+                    {professionalShotState.fallbackUsed && professionalShotState.fallbackReason && (
+                      <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                        Fallback: {professionalShotState.fallbackReason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-violet-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Professional Shot:</span>{" "}
+                      Generated using Prompt 4 — a professional hero/catalog e-commerce image with the exact earring on a pure white background, product only, with no human model or decorative elements.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={() => handleProfessionalShotGenerate(professionalShotEarringType || undefined)}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* Professional Shot Error */}
+              {professionalShotState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">Professional Shot Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {professionalShotState.errorMessage}
+                  </p>
+                  <button
+                    onClick={() => handleProfessionalShotGenerate(professionalShotEarringType || undefined)}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── Complementary Shot Image Generation (Prompt 5) ──────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/10">
+                  <ShoppingBag size={15} className="text-amber-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    Complementary Shot
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    Editorial-style complementary image — asymmetric staging on premium surface
+                  </p>
+                </div>
+              </div>
+
+              {/* Earring Type Selection */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Earring Type:
+                </span>
+                {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleComplementaryShotGenerate(type)}
+                    disabled={complementaryShotState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: complementaryShotEarringType === type ? "#F59E0B" : "var(--theme-border)",
+                      backgroundColor: complementaryShotEarringType === type ? "#F59E0B/15" : "var(--theme-muted)",
+                      color: complementaryShotEarringType === type ? "#F59E0B" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {type}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleComplementaryShotGenerate()}
+                  disabled={complementaryShotState.status === "generating"}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: !complementaryShotEarringType ? "#F59E0B" : "var(--theme-border)",
+                    backgroundColor: !complementaryShotEarringType ? "#F59E0B/15" : "var(--theme-muted)",
+                    color: !complementaryShotEarringType ? "#F59E0B" : "var(--theme-text-secondary)",
+                  }}
+                >
+                  Auto-detect
+                </button>
+              </div>
+
+              {/* Complementary Shot Loading State */}
+              {complementaryShotState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#F59E0B" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <ShoppingBag size={18} className="text-amber-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating complementary shot image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    {complementaryShotEarringType ? `${complementaryShotEarringType} earring` : "Auto-detecting earring type"} — using AI
+                  </p>
+                </div>
+              )}
+
+              {/* Complementary Shot Result */}
+              {complementaryShotState.status === "completed" && complementaryShotState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setComplementaryShotPreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: complementaryShotPreview === "before" && imageBase64 ? "#F59E0B" : "transparent",
+                          color: complementaryShotPreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setComplementaryShotPreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: complementaryShotPreview === "after" ? "#F59E0B" : "transparent",
+                          color: complementaryShotPreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleComplementaryShotDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: complementaryShotDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {complementaryShotDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={complementaryShotPreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : complementaryShotState.imageUrl}
+                        alt={complementaryShotPreview === "before" ? "Original uploaded earring reference" : "Complementary Shot generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {complementaryShotState.generationTime.toFixed(1)}s
+                    </span>
+                    {complementaryShotState.fallbackUsed && complementaryShotState.fallbackReason && (
+                      <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                        Fallback: {complementaryShotState.fallbackReason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Complementary Shot:</span>{" "}
+                      Generated using Prompt 5 — a premium editorial-style complementary image with asymmetric staging, muted neutral surface, and soft directional lighting, preserving exact product fidelity.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={() => handleComplementaryShotGenerate(complementaryShotEarringType || undefined)}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* Complementary Shot Error */}
+              {complementaryShotState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">Complementary Shot Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {complementaryShotState.errorMessage}
+                  </p>
+                  <button
+                    onClick={() => handleComplementaryShotGenerate(complementaryShotEarringType || undefined)}
                     className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
                   >
                     <RefreshCw size={10} /> Try Again

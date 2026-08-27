@@ -15,6 +15,8 @@ from app.api.routes import prompt_fusion
 from app.api.routes import earring_ecommerce
 from app.api.routes import earring_close_up_ears
 from app.api.routes import earring_scale_reference
+from app.api.routes import earring_professional_shot
+from app.api.routes import earring_complementary_shot
 from app.api.routes.health import router as health_router
 
 # Import Celery task modules so they register with the Celery app
@@ -115,6 +117,8 @@ app.include_router(prompt_fusion.router)
 app.include_router(earring_ecommerce.router)
 app.include_router(earring_close_up_ears.router)
 app.include_router(earring_scale_reference.router)
+app.include_router(earring_professional_shot.router)
+app.include_router(earring_complementary_shot.router)
 
 # Serve uploaded files statically
 uploads_path = settings.UPLOAD_PATH
