@@ -110,6 +110,7 @@ async def generate_image(
         result = await manager.generate_image(
             prompt=request.prompt,
             context=context,
+            force_provider=request.force_provider,
             reference_image=reference_image,
             reference_mime_type=reference_mime_type,
             marketplace=request.marketplace,
@@ -122,6 +123,9 @@ async def generate_image(
                 f"fallback={result.fallback_used} "
                 f"time={result.processing_time:.2f}s"
             )
+
+            # Detect manual provider switch from metadata
+            generation_mode = (result.metadata or {}).get("generation_mode", "primary")
 
             return ImageGenerationResponse(
                 success=True,

@@ -46,6 +46,15 @@ class ImageGenerationRequest(BaseModel):
             "When None, the prompt is sent without marketplace overlay."
         ),
     )
+    force_provider: Optional[str] = Field(
+        None,
+        description=(
+            "Optional provider name to force (e.g. 'openai' or 'gemini'). "
+            "When set, uses ONLY this provider with no automatic fallback. "
+            "Used for manual provider switching by the user. "
+            "When None, uses the default provider chain with automatic failover."
+        ),
+    )
 
 
 class ImageGenerationResponse(BaseModel):

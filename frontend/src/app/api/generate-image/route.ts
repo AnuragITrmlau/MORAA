@@ -31,6 +31,11 @@ interface GenerateImageBody {
    * MIME type of the reference image (default: image/jpeg).
    */
   referenceMimeType?: string;
+  /**
+   * Optional provider to force (e.g. 'openai' or 'gemini').
+   * When set, uses ONLY this provider with no automatic fallback.
+   */
+  forceProvider?: string;
 }
 
 function validateBody(body: unknown): body is GenerateImageBody {
@@ -73,6 +78,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         image_id: body.imageId,
         reference_image: body.referenceImage || null,
         reference_mime_type: body.referenceMimeType || "image/jpeg",
+        force_provider: body.forceProvider || null,
       }),
     });
 

@@ -332,10 +332,23 @@ class ImageGenerationManager:
                         result.provider_name = provider_name
                         result.fallback_used = is_fallback
                         result.fallback_reason = fallback_reason
+
+                        # Tag generation_mode in metadata so the frontend
+                        # can distinguish primary, fallback, and manual switch.
+                        if force_provider:
+                            gen_mode = "manual_switch"
+                        elif is_fallback:
+                            gen_mode = "fallback"
+                        else:
+                            gen_mode = "primary"
+                        meta = dict(result.metadata) if result.metadata else {}
+                        meta["generation_mode"] = gen_mode
+                        result.metadata = meta
+
                         logger.info(
                             f"ImageGenerationManager: success with "
                             f"provider '{provider_name}' "
-                            f"fallback={is_fallback} "
+                            f"mode={gen_mode} "
                             f"time={result.processing_time:.2f}s "
                             f"request_id={request_id}"
                         )

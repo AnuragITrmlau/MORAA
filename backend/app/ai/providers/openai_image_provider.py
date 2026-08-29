@@ -208,6 +208,15 @@ class OpenAIImageProvider(BaseImageGenerationProvider):
                             # "auto". HIGH preserves luxury-detail fidelity on
                             # the primary ChatGPT-image path.
                             quality="high",
+                            # input_fidelity controls how strongly the model
+                            # preserves details from the input reference image.
+                            # "high" maximises product-preservation fidelity —
+                            # critical for jewellery where stone count, placement,
+                            # geometry, and metal appearance must be exact.
+                            input_fidelity="high",
+                            # Lossless PNG output to preserve fine jewellery
+                            # detail (stones, metalwork, engravings).
+                            output_format="png",
                         )
                 finally:
                     tmp.close()

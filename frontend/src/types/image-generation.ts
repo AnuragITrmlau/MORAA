@@ -21,6 +21,8 @@ export interface ImageGenerationState {
   fallbackReason: string | null;
   generationTime: number;
   errorMessage: string | null;
+  /** True when the image was generated via a manual provider switch. */
+  manualSwitch?: boolean;
 }
 
 export interface GenerateImageRequest {
@@ -45,6 +47,12 @@ export interface GenerateImageRequest {
    * marketplace overlay.
    */
   marketplace?: string;
+  /**
+   * Optional provider to force (e.g. 'openai' or 'gemini').
+   * When set, uses ONLY this provider with no automatic fallback.
+   * Used for manual provider switching.
+   */
+  forceProvider?: string;
 }
 
 export interface GenerateImageResponse {

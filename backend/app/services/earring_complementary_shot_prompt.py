@@ -1,11 +1,15 @@
 """Complementary Shot Prompt — Prompt 5 — MORAA GemVision.
 
-Single authoritative prompt foundation for generating editorial-style
+Single authoritative prompt foundation for generating lifestyle editorial
 complementary images for Fashion Jewellery → Earrings.
 
 The uploaded product image is the sole source of truth for the jewellery.
-This prompt produces a premium editorial styled-catalog image with
-asymmetric staging, muted neutral surfaces, and soft directional lighting.
+This prompt produces a premium lifestyle editorial image with asymmetric
+staging, premium contextual surfaces, and storytelling composition.
+
+Distinct from Prompt 4 (Professional Shot):
+- Prompt 4 = controlled studio, minimal environment, technical precision
+- Prompt 5 = lifestyle editorial, asymmetric arrangement, visual storytelling
 
 Architecture::
 
@@ -25,11 +29,12 @@ This prompt is designed to:
 1. Preserve exact product identity (source of truth = reference image)
 2. Prevent anti-symmetry normalisation (Phase 4D failure mode)
 3. Prevent colour/material shift (Task 3 validated)
-4. Produce a premium editorial complementary image on muted neutral staging
+4. Produce a lifestyle editorial complementary image with premium context
 5. Use asymmetric editorial arrangement (NOT a plain hero/catalog shot)
-6. Enforce no-human-model / no-props / no-decorative-elements rules
-7. Support Hoop, Stud, Dangle earring types
-8. Coexist with existing marketplace layers (Amazon India)
+6. Emphasize visual storytelling and environmental context
+7. Enforce no-human-model / no-props / no-decorative-elements rules
+8. Support Hoop, Stud, Dangle earring types
+9. Coexist with existing marketplace layers (Amazon India)
 """
 
 from typing import Optional
@@ -376,12 +381,18 @@ def build_complementary_shot_prompt(
 
     # ── Header ──────────────────────────────────────────────────
     parts.append(
-        "TASK: Complementary Shot.\n"
-        "Generate a premium editorial-style complementary image of the\n"
+        "TASK: Complementary Lifestyle Editorial Shot.\n"
+        "Generate a premium lifestyle editorial complementary image of the\n"
         "EXACT jewellery shown in the reference image.\n"
-        "The purpose is to present the jewellery in a tasteful, high-end\n"
-        "styled catalog setting while keeping the jewellery as the dominant\n"
-        "visual subject.\n"
+        "\n"
+        "This is visually DISTINCT from the Professional Shot (Prompt 4).\n"
+        "While Prompt 4 uses a controlled studio environment with minimal\n"
+        "context, this shot uses asymmetric arrangement, premium contextual\n"
+        "surfaces, and storytelling composition to create a richer editorial\n"
+        "narrative.\n"
+        "\n"
+        "The jewellery remains the dominant visual subject, but the\n"
+        "environment provides tasteful luxury context and depth.\n"
         "This is NOT a plain hero/catalog shot and must NOT replicate a\n"
         "standard e-commerce composition."
     )
@@ -469,6 +480,25 @@ def build_complementary_shot_prompt(
     # ── Visual Hierarchy ────────────────────────────────────────
     parts.append(VISUAL_HIERARCHY_INSTRUCTION)
 
+    # ── Storytelling Composition ────────────────────────────────
+    parts.append(
+        "STORYTELLING COMPOSITION (NON-NEGOTIABLE):\n"
+        "This is a lifestyle editorial shot, NOT a controlled studio product\n"
+        "shot. The composition should feel natural and aspirational — as if\n"
+        "the jewellery belongs in this premium environment.\n"
+        "\n"
+        "Composition principles:\n"
+        "• Asymmetric, dynamic arrangement — not perfectly centered.\n"
+        "• Natural visual flow that guides the eye to the jewellery.\n"
+        "• Environmental context that enhances the product narrative.\n"
+        "• Subtle depth and layering in the scene.\n"
+        "• The environment tells a story about the product's premium\n"
+        "  positioning and target audience.\n"
+        "\n"
+        "The jewellery must remain the clear primary focal point.\n"
+        "The environment supports the narrative without overwhelming."
+    )
+
     # ── Negative Space ──────────────────────────────────────────
     parts.append(NEGATIVE_SPACE_INSTRUCTION)
 
@@ -481,20 +511,22 @@ def build_complementary_shot_prompt(
     # ── Output Style ────────────────────────────────────────────
     parts.append(
         "OUTPUT STYLE:\n"
-        "Premium editorial jewellery catalog photography.\n"
+        "Premium lifestyle editorial jewellery photography.\n"
+        "Aspirational.\n"
         "Sophisticated.\n"
-        "Refined.\n"
-        "Product-focused.\n"
-        "Commercial e-commerce ready.\n"
+        "Product-focused with premium environmental context.\n"
         "\n"
         "The jewellery is the hero of the composition.\n"
-        "The staging surface provides tasteful context and depth.\n"
+        "The premium contextual surface provides tasteful context, depth,\n"
+        "and lifestyle narrative.\n"
         "\n"
         "IMAGE QUALITY:\n"
-        "• Photorealistic commercial editorial photography.\n"
+        "• Photorealistic lifestyle editorial photography.\n"
         "• Extremely sharp jewellery details.\n"
         "• Preserve fine stones, beads, metal edges, texture, hooks,\n"
         "  posts, and structural details.\n"
+        "• Controlled depth of field — jewellery sharp, background\n"
+        "  slightly softer.\n"
         "• High-resolution output.\n"
         "• Preferred e-commerce aspect ratio: 4:5.\n"
         "• Maintain sufficient resolution for close inspection and\n"
