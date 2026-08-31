@@ -1,10 +1,9 @@
 // ============================================================
-// earring-professional-shot.service.ts — Professional Commercial Earring Photography & Dynamic Environment Engine
-// MORAA GemVision — Prompt 4
+// earring-macro-shot.service.ts — Earring Macro Shot Prompt Service
+// MORAA GemVision — Prompt 7
 // ============================================================
-// Calls the backend's /api/earring-professional-shot/prompt endpoint
-// to get the single authoritative professional commercial earring
-// photography prompt with a selectable environment archetype.
+// Calls the backend's /api/earring-macro-shot/prompt endpoint
+// to get the single authoritative macro shot prompt.
 //
 // The returned prompt is then sent to /api/generate-image along
 // with the reference image for actual image generation.
@@ -16,69 +15,57 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type EarringType = "Hoop" | "Stud" | "Dangle";
 
-export type EnvironmentArchetype =
-  | "minimalist"
-  | "organic"
-  | "luxury";
-
-interface ProfessionalShotPromptRequest {
+interface MacroShotPromptRequest {
   earringType?: EarringType;
-  archetype?: EnvironmentArchetype;
 }
 
-interface ProfessionalShotPromptResponse {
+interface MacroShotPromptResponse {
   success: boolean;
   prompt?: string;
   earring_type?: string;
-  archetype?: string;
   error?: string;
 }
 
 /**
- * Generate the single authoritative professional commercial earring photography
- * prompt with a dynamic environment archetype (Prompt 4).
+ * Generate the single authoritative earring macro shot prompt (Prompt 7).
  *
  * This calls the backend endpoint which returns a complete prompt string
  * including:
  * - Reference image priority marker
- * - Product fidelity — highest priority
+ * - Product fidelity — absolute priority
  * - Anti-redesign rules
  * - Anti-symmetry / anti-beautification rules
  * - Product identity preservation
  * - Earring type-specific preservation (Hoop/Stud/Dangle)
  * - Material & colour fidelity
- * - Archetype-specific environment instructions
- * - Archetype-specific lighting instructions
- * - Optical style (macro product photography)
- * - Gemstone presentation
- * - Environment interaction
- * - Grounding and contact shadows
- * - Negative constraints
+ * - Macro photography requirement
+ * - Detail visibility rules
+ * - Framing, focus, and lighting rules
+ * - Anti-beautification / anti-reconstruction rules
+ * - Reference priority hierarchy
  *
  * The returned prompt should be sent to /api/generate-image with
  * the reference image.
  */
-export async function generateProfessionalShotPrompt(
-  request: ProfessionalShotPromptRequest = {},
+export async function generateMacroShotPrompt(
+  request: MacroShotPromptRequest = {},
 ): Promise<string> {
   const requestId = generateRequestId();
   const startTime = Date.now();
 
-  logger.info("Professional commercial earring photography prompt requested", {
+  logger.info("Macro shot prompt requested", {
     requestId,
     earringType: request.earringType || "generic",
-    archetype: request.archetype || "minimalist",
   });
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/earring-professional-shot/prompt`,
+      `${API_BASE_URL}/api/earring-macro-shot/prompt`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           earring_type: request.earringType || null,
-          archetype: request.archetype || "minimalist",
         }),
       },
     );
@@ -86,22 +73,21 @@ export async function generateProfessionalShotPrompt(
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Professional commercial earring photography endpoint returned ${response.status}: ${errorText}`,
+        `Macro shot prompt endpoint returned ${response.status}: ${errorText}`,
       );
     }
 
-    const result: ProfessionalShotPromptResponse = await response.json();
+    const result: MacroShotPromptResponse = await response.json();
 
     if (!result.success || !result.prompt) {
       throw new Error(
-        result.error || "Professional commercial earring photography prompt generation failed",
+        result.error || "Macro shot prompt generation failed",
       );
     }
 
-    logger.info("Professional commercial earring photography prompt generated", {
+    logger.info("Macro shot prompt generated", {
       requestId,
       earringType: request.earringType || "generic",
-      archetype: request.archetype || "minimalist",
       promptLength: result.prompt.length,
       timeMs: Date.now() - startTime,
     });
@@ -109,7 +95,7 @@ export async function generateProfessionalShotPrompt(
     return result.prompt;
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logger.error("Professional commercial earring photography prompt generation failed", {
+    logger.error("Macro shot prompt generation failed", {
       requestId,
       error: errMsg,
       timeMs: Date.now() - startTime,

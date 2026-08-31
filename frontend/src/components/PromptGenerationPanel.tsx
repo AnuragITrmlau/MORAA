@@ -35,8 +35,10 @@ import { getCleanVisualPrompt } from "@/services/promotional-prompts";
 import { generateEarringEcommercePrompt, type EarringType } from "@/services/earring-ecommerce.service";
 import { generateCloseUpEarsPrompt } from "@/services/earring-close-up-ears.service";
 import { generateScaleReferencePrompt } from "@/services/earring-scale-reference.service";
-import { generateProfessionalShotPrompt } from "@/services/earring-professional-shot.service";
+import { generateProfessionalShotPrompt, type EnvironmentArchetype } from "@/services/earring-professional-shot.service";
 import { generateComplementaryShotPrompt } from "@/services/earring-complementary-shot.service";
+import { generateUGCStylePrompt } from "@/services/earring-ugc-style.service";
+import { generateMacroShotPrompt } from "@/services/earring-macro-shot.service";
 import type { AnalysisResult } from "@/types/analysis";
 import type { ImageGenerationState } from "@/types/image-generation";
 import { logger } from "@/lib/logger";
@@ -603,6 +605,7 @@ export default function PromptGenerationPanel({
     errorMessage: null,
   });
   const [professionalShotEarringType, setProfessionalShotEarringType] = useState<EarringType | null>(null);
+  const [professionalShotArchetype, setProfessionalShotArchetype] = useState<EnvironmentArchetype>("minimalist");
   const [professionalShotPreview, setProfessionalShotPreview] = useState<"before" | "after">("after");
   const [professionalShotDownloaded, setProfessionalShotDownloaded] = useState(false);
 
@@ -619,6 +622,36 @@ export default function PromptGenerationPanel({
   const [complementaryShotEarringType, setComplementaryShotEarringType] = useState<EarringType | null>(null);
   const [complementaryShotPreview, setComplementaryShotPreview] = useState<"before" | "after">("after");
   const [complementaryShotDownloaded, setComplementaryShotDownloaded] = useState(false);
+
+  // UGC Style generation state (Prompt 6)
+  const [ugcStyleState, setUgcStyleState] = useState<ImageGenerationState>({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [ugcStyleEarringType, setUgcStyleEarringType] = useState<EarringType | null>(null);
+  const [ugcStylePreview, setUgcStylePreview] = useState<"before" | "after">("after");
+  const [ugcStyleDownloaded, setUgcStyleDownloaded] = useState(false);
+
+  // Macro Shot generation state (Prompt 7)
+  const [macroShotState, setMacroShotState] = useState<ImageGenerationState>({
+    status: "idle",
+    imageUrl: null,
+    provider: "",
+    fallbackUsed: false,
+    fallbackReason: null,
+    generationTime: 0,
+    errorMessage: null,
+  });
+  const [macroShotEarringType, setMacroShotEarringType] = useState<EarringType | null>(null);
+  const [macroShotPreview, setMacroShotPreview] = useState<"before" | "after">("after");
+  const [macroShotDownloaded, setMacroShotDownloaded] = useState(false);
+
+
 
   // Promotional image generation state — independent per card
   const defaultCardState = (): ImageGenerationState => ({
@@ -1147,9 +1180,11 @@ export default function PromptGenerationPanel({
 
   // ── Professional Shot Image Generation (Prompt 4) ──────────────
 
-  const handleProfessionalShotGenerate = useCallback(async (earringType?: EarringType, forceProvider?: string) => {
+  const handleProfessionalShotGenerate = useCallback(async (archetype?: EnvironmentArchetype, earringType?: EarringType, forceProvider?: string) => {
     if (professionalShotState.status === "generating") return;
 
+    const selectedArchetype = archetype || "minimalist";
+    setProfessionalShotArchetype(selectedArchetype);
     setProfessionalShotEarringType(earringType || null);
     setProfessionalShotState({
       status: "generating",
@@ -1163,8 +1198,9 @@ export default function PromptGenerationPanel({
     });
 
     try {
-      // Step 1: Get the Professional Shot prompt from Prompt 4 backend
+      // Step 1: Get the Professional Commercial Photography prompt from Prompt 4 backend
       const prompt = await generateProfessionalShotPrompt({
+        archetype: selectedArchetype,
         earringType: earringType || undefined,
       });
 
@@ -1206,7 +1242,7 @@ export default function PromptGenerationPanel({
           fallbackUsed: result.fallback_used,
           fallbackReason: result.fallback_reason ?? null,
           generationTime: result.generation_time,
-          errorMessage: result.error || "Professional Shot image generation failed",
+          errorMessage: result.error || "Professional Commercial Photography image generation failed",
         });
       }
     } catch (err: unknown) {
@@ -1221,7 +1257,7 @@ export default function PromptGenerationPanel({
         errorMessage: errMsg,
       });
     }
-  }, [professionalShotState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+  }, [professionalShotState.status, professionalShotArchetype, imageBase64, mimeType, ecommerceState.imageUrl]);
 
   const handleProfessionalShotDownload = useCallback(async () => {
     if (!professionalShotState.imageUrl) return;
@@ -1342,6 +1378,200 @@ export default function PromptGenerationPanel({
       logger.error("Failed to download complementary shot image", { error: String(err) });
     }
   }, [complementaryShotState.imageUrl]);
+
+  // ── UGC Style Image Generation (Prompt 6) ──────────────────────
+
+  const handleUGCStyleGenerate = useCallback(async (earringType?: EarringType, forceProvider?: string) => {
+    if (ugcStyleState.status === "generating") return;
+
+    setUgcStyleEarringType(earringType || null);
+    setUgcStyleState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+      manualSwitch: !!forceProvider,
+    });
+
+    try {
+      // Step 1: Get the UGC Style prompt from Prompt 6 backend
+      const prompt = await generateUGCStylePrompt({
+        earringType: earringType || undefined,
+      });
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        forceProvider,
+      });
+
+      if (result.success && result.image_url) {
+        setUgcStyleState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+          manualSwitch: !!forceProvider,
+        });
+      } else {
+        setUgcStyleState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "UGC Style image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setUgcStyleState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [ugcStyleState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleUGCStyleDownload = useCallback(async () => {
+    if (!ugcStyleState.imageUrl) return;
+
+    try {
+      const response = await fetch(ugcStyleState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-ugc-style.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setUgcStyleDownloaded(true);
+      setTimeout(() => setUgcStyleDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download UGC style image", { error: String(err) });
+    }
+  }, [ugcStyleState.imageUrl]);
+
+  // ── Macro Shot Image Generation (Prompt 7) ──────────────────────
+
+  const handleMacroShotGenerate = useCallback(async (earringType?: EarringType, forceProvider?: string) => {
+    if (macroShotState.status === "generating") return;
+
+    setMacroShotEarringType(earringType || null);
+    setMacroShotState({
+      status: "generating",
+      imageUrl: null,
+      provider: "openai",
+      fallbackUsed: false,
+      fallbackReason: null,
+      generationTime: 0,
+      errorMessage: null,
+      manualSwitch: !!forceProvider,
+    });
+
+    try {
+      // Step 1: Get the Macro Shot prompt from Prompt 7 backend
+      const prompt = await generateMacroShotPrompt({
+        earringType: earringType || undefined,
+      });
+
+      // Step 2: Send prompt + reference image to generate-image
+      // PREFERRED: Use the Prompt 1 e-commerce output as the product reference
+      // FALLBACK: Use the raw uploaded reference if Prompt 1 hasn't been run yet.
+      const refMime = mimeType || "image/jpeg";
+      const productRefImage = ecommerceState.imageUrl || imageBase64;
+      const refImageDataUrl = productRefImage
+        ? (productRefImage.startsWith("data:") ? productRefImage : `data:${refMime};base64,${productRefImage}`)
+        : undefined;
+      const result = await generateImage({
+        prompt,
+        aspectRatio: "4:5",
+        referenceImage: refImageDataUrl,
+        referenceMimeType: refMime,
+        forceProvider,
+      });
+
+      if (result.success && result.image_url) {
+        setMacroShotState({
+          status: "completed",
+          imageUrl: result.image_url,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: null,
+          manualSwitch: !!forceProvider,
+        });
+      } else {
+        setMacroShotState({
+          status: "error",
+          imageUrl: null,
+          provider: result.provider,
+          fallbackUsed: result.fallback_used,
+          fallbackReason: result.fallback_reason ?? null,
+          generationTime: result.generation_time,
+          errorMessage: result.error || "Macro Shot image generation failed",
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setMacroShotState({
+        status: "error",
+        imageUrl: null,
+        provider: "none",
+        fallbackUsed: false,
+        fallbackReason: null,
+        generationTime: 0,
+        errorMessage: errMsg,
+      });
+    }
+  }, [macroShotState.status, imageBase64, mimeType, ecommerceState.imageUrl]);
+
+  const handleMacroShotDownload = useCallback(async () => {
+    if (!macroShotState.imageUrl) return;
+
+    try {
+      const response = await fetch(macroShotState.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = "earring-macro-shot.png";
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+      setMacroShotDownloaded(true);
+      setTimeout(() => setMacroShotDownloaded(false), 2000);
+    } catch (err) {
+      logger.error("Failed to download macro shot image", { error: String(err) });
+    }
+  }, [macroShotState.imageUrl]);
+
+
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -2039,7 +2269,7 @@ export default function PromptGenerationPanel({
             </div>
           </motion.div>
 
-          {/* ── Professional Shot Image Generation (Prompt 4) ──────── */}
+          {/* ── Professional Commercial Photography — Dynamic Environment (Prompt 4) ──────── */}
           <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
             <div className="p-5">
               <div className="flex items-center gap-3 mb-3">
@@ -2048,12 +2278,38 @@ export default function PromptGenerationPanel({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
-                    Professional Shot
+                    Professional Commercial Photography
                   </h4>
                   <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
-                    Professional editorial studio — grey linen & light marble
+                    Dynamic environment engine — professional commercial earring photography with selectable studio environments
                   </p>
                 </div>
+              </div>
+
+              {/* Environment Selection */}
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Environment:
+                </span>
+                {([
+                  { key: "minimalist" as const, label: "Minimalist Studio" },
+                  { key: "organic" as const, label: "Organic Still Life" },
+                  { key: "luxury" as const, label: "Luxury Drapery" },
+                ]).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => handleProfessionalShotGenerate(key)}
+                    disabled={professionalShotState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: professionalShotArchetype === key ? "#8B5CF6" : "var(--theme-border)",
+                      backgroundColor: professionalShotArchetype === key ? "#8B5CF6/15" : "var(--theme-muted)",
+                      color: professionalShotArchetype === key ? "#8B5CF6" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {/* Earring Type Selection */}
@@ -2064,7 +2320,7 @@ export default function PromptGenerationPanel({
                 {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
                   <button
                     key={type}
-                    onClick={() => handleProfessionalShotGenerate(type)}
+                    onClick={() => handleProfessionalShotGenerate(professionalShotArchetype, type)}
                     disabled={professionalShotState.status === "generating"}
                     className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{
@@ -2077,7 +2333,7 @@ export default function PromptGenerationPanel({
                   </button>
                 ))}
                 <button
-                  onClick={() => handleProfessionalShotGenerate()}
+                  onClick={() => handleProfessionalShotGenerate(professionalShotArchetype)}
                   disabled={professionalShotState.status === "generating"}
                   className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
@@ -2100,10 +2356,10 @@ export default function PromptGenerationPanel({
                     </div>
                   </div>
                   <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
-                    Generating professional shot image...
+                    Generating professional commercial image...
                   </p>
                   <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
-                    {professionalShotEarringType ? `${professionalShotEarringType} earring` : "Auto-detecting earring type"} — using AI
+                    {professionalShotArchetype === "minimalist" ? "Minimalist Studio" : professionalShotArchetype === "organic" ? "Organic Still Life" : "Luxury Drapery"}{professionalShotEarringType ? ` · ${professionalShotEarringType} earring` : ""} — using AI
                   </p>
                 </div>
               )}
@@ -2180,7 +2436,7 @@ export default function PromptGenerationPanel({
                         if (!other) return null;
                         return (
                           <button
-                            onClick={() => handleProfessionalShotGenerate(professionalShotEarringType || undefined, other)}
+                            onClick={() => handleProfessionalShotGenerate(professionalShotArchetype, professionalShotEarringType || undefined, other)}
                             className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-all duration-200 border hover:bg-white/[0.06] active:scale-95"
                             style={{ borderColor: "var(--theme-border)", color: "var(--theme-text-secondary)" }}
                           >
@@ -2194,13 +2450,13 @@ export default function PromptGenerationPanel({
                   <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
                     <Eye size={14} className="text-violet-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
-                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Professional Shot:</span>{" "}
-                      Generated using Prompt 4 — a professional hero/catalog e-commerce image with the exact earring on a pure white background, product only, with no human model or decorative elements.
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Professional Commercial Photography:</span>{" "}
+                      Generated using Prompt 4 — professional commercial earring photography with a dynamic environment engine. The exact jewellery product is preserved with selectable studio environments.
                     </div>
                   </div>
                   {/* Regenerate button */}
                   <button
-                    onClick={() => handleProfessionalShotGenerate(professionalShotEarringType || undefined)}
+                    onClick={() => handleProfessionalShotGenerate(professionalShotArchetype, professionalShotEarringType || undefined)}
                     className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
                     style={{ color: "var(--theme-text-secondary)" }}
                   >
@@ -2209,16 +2465,16 @@ export default function PromptGenerationPanel({
                 </div>
               )}
 
-              {/* Professional Shot Error */}
+              {/* Professional Commercial Photography Error */}
               {professionalShotState.status === "error" && (
                 <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
                   <AlertTriangle size={20} className="text-red-400 mb-2" />
-                  <p className="text-xs font-medium text-red-400/90">Professional Shot Generation Failed</p>
+                  <p className="text-xs font-medium text-red-400/90">Professional Commercial Photography Generation Failed</p>
                   <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
                     {professionalShotState.errorMessage}
                   </p>
                   <button
-                    onClick={() => handleProfessionalShotGenerate(professionalShotEarringType || undefined)}
+                    onClick={() => handleProfessionalShotGenerate(professionalShotArchetype, professionalShotEarringType || undefined)}
                     className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
                   >
                     <RefreshCw size={10} /> Try Again
@@ -2408,6 +2664,384 @@ export default function PromptGenerationPanel({
                   </p>
                   <button
                     onClick={() => handleComplementaryShotGenerate(complementaryShotEarringType || undefined)}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── UGC Style Image Generation (Prompt 6) ──────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/20 to-green-500/20 border border-emerald-500/10">
+                  <Smartphone size={15} className="text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    UGC Style
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    Authentic customer perspective — natural daylight, unboxing & vanity lifestyle staging
+                  </p>
+                </div>
+              </div>
+
+              {/* Earring Type Selection */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Earring Type:
+                </span>
+                {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleUGCStyleGenerate(type)}
+                    disabled={ugcStyleState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: ugcStyleEarringType === type ? "#10B981" : "var(--theme-border)",
+                      backgroundColor: ugcStyleEarringType === type ? "#10B981/15" : "var(--theme-muted)",
+                      color: ugcStyleEarringType === type ? "#10B981" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {type}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleUGCStyleGenerate()}
+                  disabled={ugcStyleState.status === "generating"}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: !ugcStyleEarringType ? "#10B981" : "var(--theme-border)",
+                    backgroundColor: !ugcStyleEarringType ? "#10B981/15" : "var(--theme-muted)",
+                    color: !ugcStyleEarringType ? "#10B981" : "var(--theme-text-secondary)",
+                  }}
+                >
+                  Auto-detect
+                </button>
+              </div>
+
+              {/* UGC Style Loading State */}
+              {ugcStyleState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#10B981" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Smartphone size={18} className="text-emerald-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating UGC style image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    {ugcStyleEarringType ? `${ugcStyleEarringType} earring` : "Auto-detecting earring type"} — using AI
+                  </p>
+                </div>
+              )}
+
+              {/* UGC Style Result */}
+              {ugcStyleState.status === "completed" && ugcStyleState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setUgcStylePreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: ugcStylePreview === "before" && imageBase64 ? "#10B981" : "transparent",
+                          color: ugcStylePreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setUgcStylePreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: ugcStylePreview === "after" ? "#10B981" : "transparent",
+                          color: ugcStylePreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleUGCStyleDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: ugcStyleDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {ugcStyleDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={ugcStylePreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : ugcStyleState.imageUrl}
+                        alt={ugcStylePreview === "before" ? "Original uploaded earring reference" : "UGC Style generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {ugcStyleState.generationTime.toFixed(1)}s
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const label = formatProviderLabel(ugcStyleState.provider, ugcStyleState.fallbackUsed, ugcStyleState.manualSwitch);
+                        return label ? (
+                          <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                            Generated by {label}
+                          </span>
+                        ) : null;
+                      })()}
+                      {ugcStyleState.fallbackUsed && ugcStyleState.fallbackReason && (
+                        <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                          Fallback: {ugcStyleState.fallbackReason}
+                        </span>
+                      )}
+                      {(() => {
+                        const other = getOtherProvider(ugcStyleState.provider);
+                        if (!other) return null;
+                        return (
+                          <button
+                            onClick={() => handleUGCStyleGenerate(ugcStyleEarringType || undefined, other)}
+                            className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-all duration-200 border hover:bg-white/[0.06] active:scale-95"
+                            style={{ borderColor: "var(--theme-border)", color: "var(--theme-text-secondary)" }}
+                          >
+                            <RefreshCw size={9} />
+                            Generate with {providerDisplayName(other)}
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>UGC Style:</span>{" "}
+                      Generated using Prompt 6 — an authentic customer-perspective UGC lifestyle photograph with natural daylight, believable customer setting, and smartphone photography aesthetic, preserving exact product fidelity.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={() => handleUGCStyleGenerate(ugcStyleEarringType || undefined)}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* UGC Style Error */}
+              {ugcStyleState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">UGC Style Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {ugcStyleState.errorMessage}
+                  </p>
+                  <button
+                    onClick={() => handleUGCStyleGenerate(ugcStyleEarringType || undefined)}
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
+                  >
+                    <RefreshCw size={10} /> Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── Macro Shot Image Generation (Prompt 7) ──────── */}
+          <motion.div variants={itemVariants} className="rounded-2xl border overflow-hidden" style={{ borderColor: "var(--theme-border)", backgroundColor: "var(--theme-glass)" }}>
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500/20 to-pink-500/20 border border-rose-500/10">
+                  <Gem size={15} className="text-rose-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold" style={{ color: "var(--theme-text)" }}>
+                    Macro Shot
+                  </h4>
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--theme-text-secondary)" }}>
+                    Macro/detail photograph — genuine fine product details clearly visible
+                  </p>
+                </div>
+              </div>
+
+              {/* Earring Type Selection */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--theme-text-secondary)" }}>
+                  Earring Type:
+                </span>
+                {(["Hoop", "Stud", "Dangle"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => handleMacroShotGenerate(type)}
+                    disabled={macroShotState.status === "generating"}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      borderColor: macroShotEarringType === type ? "#F43F5E" : "var(--theme-border)",
+                      backgroundColor: macroShotEarringType === type ? "#F43F5E/15" : "var(--theme-muted)",
+                      color: macroShotEarringType === type ? "#F43F5E" : "var(--theme-text-secondary)",
+                    }}
+                  >
+                    {type}
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleMacroShotGenerate()}
+                  disabled={macroShotState.status === "generating"}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: !macroShotEarringType ? "#F43F5E" : "var(--theme-border)",
+                    backgroundColor: !macroShotEarringType ? "#F43F5E/15" : "var(--theme-muted)",
+                    color: !macroShotEarringType ? "#F43F5E" : "var(--theme-text-secondary)",
+                  }}
+                >
+                  Auto-detect
+                </button>
+              </div>
+
+              {/* Macro Shot Loading State */}
+              {macroShotState.status === "generating" && (
+                <div className="flex flex-col items-center justify-center py-10 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <div className="relative">
+                    <div className="h-14 w-14 rounded-full border-[3px] animate-spin" style={{ borderColor: "var(--theme-border)", borderTopColor: "#F43F5E" }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Gem size={18} className="text-rose-400" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm font-medium" style={{ color: "var(--theme-text-secondary)" }}>
+                    Generating macro shot image...
+                  </p>
+                  <p className="mt-1.5 text-[10px]" style={{ color: "var(--theme-text-secondary)", opacity: 0.5 }}>
+                    {macroShotEarringType ? `${macroShotEarringType} earring` : "Auto-detecting earring type"} — using AI
+                  </p>
+                </div>
+              )}
+
+              {/* Macro Shot Result */}
+              {macroShotState.status === "completed" && macroShotState.imageUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="inline-flex rounded-lg p-1" style={{ backgroundColor: "var(--theme-muted)" }}>
+                      <button
+                        onClick={() => setMacroShotPreview("before")}
+                        disabled={!imageBase64}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          backgroundColor: macroShotPreview === "before" && imageBase64 ? "#F43F5E" : "transparent",
+                          color: macroShotPreview === "before" && imageBase64 ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        Before
+                      </button>
+                      <button
+                        onClick={() => setMacroShotPreview("after")}
+                        className="rounded-md px-3 py-1.5 text-[10px] font-semibold transition-all"
+                        style={{
+                          backgroundColor: macroShotPreview === "after" ? "#F43F5E" : "transparent",
+                          color: macroShotPreview === "after" ? "white" : "var(--theme-text-secondary)",
+                        }}
+                      >
+                        After
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleMacroShotDownload}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                      style={{ color: macroShotDownloaded ? "#22C55E" : "var(--theme-text-secondary)" }}
+                    >
+                      {macroShotDownloaded ? <><Check size={12} /> Downloaded</> : <><Download size={12} /> Download</>}
+                    </button>
+                  </div>
+                  <div className="relative group mx-auto w-full max-w-[640px]">
+                    <div className="relative overflow-hidden rounded-2xl border" style={{ borderColor: "var(--theme-border-light)" }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={macroShotPreview === "before" && imageBase64
+                          ? `data:${mimeType || "image/jpeg"};base64,${imageBase64}`
+                          : macroShotState.imageUrl}
+                        alt={macroShotPreview === "before" ? "Original uploaded earring reference" : "Macro Shot generated image"}
+                        className="w-full object-contain"
+                        style={{ maxHeight: "560px", minHeight: "240px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                      <Clock size={10} className="inline mr-1" />
+                      {macroShotState.generationTime.toFixed(1)}s
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const label = formatProviderLabel(macroShotState.provider, macroShotState.fallbackUsed, macroShotState.manualSwitch);
+                        return label ? (
+                          <span className="text-[10px] font-medium px-2 py-1 rounded-lg" style={{ backgroundColor: "var(--theme-muted)", color: "var(--theme-text-secondary)" }}>
+                            Generated by {label}
+                          </span>
+                        ) : null;
+                      })()}
+                      {macroShotState.fallbackUsed && macroShotState.fallbackReason && (
+                        <span className="text-[10px] font-medium px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400">
+                          Fallback: {macroShotState.fallbackReason}
+                        </span>
+                      )}
+                      {(() => {
+                        const other = getOtherProvider(macroShotState.provider);
+                        if (!other) return null;
+                        return (
+                          <button
+                            onClick={() => handleMacroShotGenerate(macroShotEarringType || undefined, other)}
+                            className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-all duration-200 border hover:bg-white/[0.06] active:scale-95"
+                            style={{ borderColor: "var(--theme-border)", color: "var(--theme-text-secondary)" }}
+                          >
+                            <RefreshCw size={9} />
+                            Generate with {providerDisplayName(other)}
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <div className="rounded-xl p-3 flex items-start gap-3" style={{ backgroundColor: "var(--theme-muted)" }}>
+                    <Eye size={14} className="text-rose-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed" style={{ color: "var(--theme-text-secondary)" }}>
+                      <span className="font-semibold" style={{ color: "var(--theme-text)" }}>Macro Shot:</span>{" "}
+                      Generated using Prompt 7 — a professional macro/detail photograph showing genuine fine product details (stone settings, cuts, prongs, metal texture, surface finish, edges, joints, hooks, links) with exact product fidelity preserved.
+                    </div>
+                  </div>
+                  {/* Regenerate button */}
+                  <button
+                    onClick={() => handleMacroShotGenerate(macroShotEarringType || undefined)}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-all duration-200 hover:bg-white/[0.08] active:scale-95"
+                    style={{ color: "var(--theme-text-secondary)" }}
+                  >
+                    <RefreshCw size={10} /> Regenerate
+                  </button>
+                </div>
+              )}
+
+              {/* Macro Shot Error */}
+              {macroShotState.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-8 rounded-xl" style={{ backgroundColor: "var(--theme-muted)" }}>
+                  <AlertTriangle size={20} className="text-red-400 mb-2" />
+                  <p className="text-xs font-medium text-red-400/90">Macro Shot Generation Failed</p>
+                  <p className="text-[10px] mt-1 px-4 text-center" style={{ color: "var(--theme-text-secondary)", opacity: 0.7 }}>
+                    {macroShotState.errorMessage}
+                  </p>
+                  <button
+                    onClick={() => handleMacroShotGenerate(macroShotEarringType || undefined)}
                     className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-all duration-200"
                   >
                     <RefreshCw size={10} /> Try Again

@@ -1,10 +1,9 @@
 // ============================================================
-// earring-professional-shot.service.ts — Professional Commercial Earring Photography & Dynamic Environment Engine
-// MORAA GemVision — Prompt 4
+// earring-ugc-style.service.ts — Earring UGC Style Prompt Service
+// MORAA GemVision — Prompt 6
 // ============================================================
-// Calls the backend's /api/earring-professional-shot/prompt endpoint
-// to get the single authoritative professional commercial earring
-// photography prompt with a selectable environment archetype.
+// Calls the backend's /api/earring-ugc-style/prompt endpoint
+// to get the single authoritative UGC style prompt.
 //
 // The returned prompt is then sent to /api/generate-image along
 // with the reference image for actual image generation.
@@ -16,69 +15,56 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type EarringType = "Hoop" | "Stud" | "Dangle";
 
-export type EnvironmentArchetype =
-  | "minimalist"
-  | "organic"
-  | "luxury";
-
-interface ProfessionalShotPromptRequest {
+interface UGCStylePromptRequest {
   earringType?: EarringType;
-  archetype?: EnvironmentArchetype;
 }
 
-interface ProfessionalShotPromptResponse {
+interface UGCStylePromptResponse {
   success: boolean;
   prompt?: string;
   earring_type?: string;
-  archetype?: string;
   error?: string;
 }
 
 /**
- * Generate the single authoritative professional commercial earring photography
- * prompt with a dynamic environment archetype (Prompt 4).
+ * Generate the single authoritative earring UGC style prompt (Prompt 6).
  *
  * This calls the backend endpoint which returns a complete prompt string
  * including:
  * - Reference image priority marker
- * - Product fidelity — highest priority
+ * - Product fidelity — absolute priority
  * - Anti-redesign rules
  * - Anti-symmetry / anti-beautification rules
  * - Product identity preservation
  * - Earring type-specific preservation (Hoop/Stud/Dangle)
  * - Material & colour fidelity
- * - Archetype-specific environment instructions
- * - Archetype-specific lighting instructions
- * - Optical style (macro product photography)
- * - Gemstone presentation
- * - Environment interaction
- * - Grounding and contact shadows
- * - Negative constraints
+ * - UGC environment (vanity, unboxing, wooden desk, linen)
+ * - Natural window daylight lighting
+ * - Smartphone photography aesthetic
+ * - Strictly forbidden elements
  *
  * The returned prompt should be sent to /api/generate-image with
  * the reference image.
  */
-export async function generateProfessionalShotPrompt(
-  request: ProfessionalShotPromptRequest = {},
+export async function generateUGCStylePrompt(
+  request: UGCStylePromptRequest = {},
 ): Promise<string> {
   const requestId = generateRequestId();
   const startTime = Date.now();
 
-  logger.info("Professional commercial earring photography prompt requested", {
+  logger.info("UGC style prompt requested", {
     requestId,
     earringType: request.earringType || "generic",
-    archetype: request.archetype || "minimalist",
   });
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/earring-professional-shot/prompt`,
+      `${API_BASE_URL}/api/earring-ugc-style/prompt`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           earring_type: request.earringType || null,
-          archetype: request.archetype || "minimalist",
         }),
       },
     );
@@ -86,22 +72,21 @@ export async function generateProfessionalShotPrompt(
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Professional commercial earring photography endpoint returned ${response.status}: ${errorText}`,
+        `UGC style prompt endpoint returned ${response.status}: ${errorText}`,
       );
     }
 
-    const result: ProfessionalShotPromptResponse = await response.json();
+    const result: UGCStylePromptResponse = await response.json();
 
     if (!result.success || !result.prompt) {
       throw new Error(
-        result.error || "Professional commercial earring photography prompt generation failed",
+        result.error || "UGC style prompt generation failed",
       );
     }
 
-    logger.info("Professional commercial earring photography prompt generated", {
+    logger.info("UGC style prompt generated", {
       requestId,
       earringType: request.earringType || "generic",
-      archetype: request.archetype || "minimalist",
       promptLength: result.prompt.length,
       timeMs: Date.now() - startTime,
     });
@@ -109,7 +94,7 @@ export async function generateProfessionalShotPrompt(
     return result.prompt;
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logger.error("Professional commercial earring photography prompt generation failed", {
+    logger.error("UGC style prompt generation failed", {
       requestId,
       error: errMsg,
       timeMs: Date.now() - startTime,

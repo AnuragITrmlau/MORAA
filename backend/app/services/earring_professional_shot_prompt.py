@@ -1,17 +1,18 @@
-"""Professional Shot Prompt — Prompt 4 — MORAA GemVision.
+"""Professional Commercial Photography — Dynamic Environment Engine
+— Prompt 4 — MORAA GemVision.
 
 Single authoritative prompt foundation for generating professional
-editorial/studio jewellery images for Fashion Jewellery → Earrings.
+commercial earring photography with selectable environment archetypes.
 
 The uploaded product image is the sole source of truth for the jewellery.
-This prompt produces a premium professional studio photograph with a
-realistic grey linen + light marble environment and editorial lighting.
+This prompt produces high-end professional commercial jewellery photography
+in a dynamic studio/tabletop environment.
 
 Architecture::
 
-    REFERENCE IMAGE (Prompt 1 output preferred, raw upload fallback)
+    REFERENCE IMAGE
           ↓
-    PROFESSIONAL SHOT FOUNDATION  ← this module
+    DYNAMIC ENVIRONMENT ENGINE  ← this module
           ↓
     REFERENCE PRIORITY (auto-appended by ImageGenerationManager)
           ↓
@@ -25,10 +26,11 @@ This prompt is designed to:
 1. Preserve exact product identity (source of truth = reference image)
 2. Prevent anti-symmetry normalisation (Phase 4D failure mode)
 3. Prevent colour/material shift (Task 3 validated)
-4. Produce a professional editorial studio image on grey linen + marble
-5. Enforce no-human-model / no-props / no-decorative-elements rules
-6. Support Hoop, Stud, Dangle earring types
-7. Coexist with existing marketplace layers (Amazon India)
+4. Produce professional commercial jewellery photography
+5. Support dynamic environment archetypes (Minimalist, Organic, Luxury)
+6. Environment-aware lighting and shadow instructions
+7. Realistic contact shadows and grounding
+8. Coexist with existing marketplace layers (Amazon India)
 """
 
 from typing import Optional
@@ -48,11 +50,228 @@ from app.services.earring_ecommerce_prompt import (
 )
 
 
+# ─── Environment Definitions ──────────────────────────────────────────
+# Each environment defines a complete backdrop, lighting, and visual
+# direction for the professional commercial earring photograph.
+# The selected environment determines the environment and lighting instructions.
+
+VALID_ENVIRONMENTS: list[str] = [
+    "minimalist",
+    "organic",
+    "luxury",
+]
+
+ENVIRONMENT_LABELS: dict[str, str] = {
+    "minimalist": "Minimalist Studio",
+    "organic": "Organic Still Life",
+    "luxury": "Luxury Drapery",
+}
+
+
+# ─── Environment Instructions per Archetype ────────────────────────────
+
+def _environment_minimalist() -> str:
+    """Minimalist Studio — clean, premium, product-focused."""
+    return (
+        "ENVIRONMENT & BACKDROP (NON-NEGOTIABLE):\n"
+        "Minimalist studio mount/stand environment.\n"
+        "Clean professional tabletop/studio environment.\n"
+        "Controlled neutral presentation.\n"
+        "Subtle grounding/contact shadow.\n"
+        "\n"
+        "The jewellery rests naturally on a clean, premium, minimal surface. "
+        "The environment must be visually neutral and unobtrusive — the "
+        "jewellery is the sole focal point.\n"
+        "\n"
+        "Do NOT generate:\n"
+        "• textured organic surfaces\n"
+        "• fabric or silk backgrounds\n"
+        "• busy or cluttered environments\n"
+        "• coloured or tinted backdrops\n"
+        "• plain pure white isolated catalog backgrounds"
+    )
+
+
+def _environment_organic() -> str:
+    """Organic Still Life — natural material textures, controlled composition."""
+    return (
+        "ENVIRONMENT & BACKDROP (NON-NEGOTIABLE):\n"
+        "Raw organic still life environment.\n"
+        "Use one or more of: raw slate, warm travertine, raw concrete, "
+        "or a similarly appropriate natural neutral texture.\n"
+        "\n"
+        "Visual direction: premium organic still life with natural material "
+        "texture and controlled composition. The jewellery remains the "
+        "dominant subject.\n"
+        "\n"
+        "The natural material texture should be visible but subordinate "
+        "to the jewellery. Do not let the background compete with the "
+        "product.\n"
+        "\n"
+        "Do NOT generate:\n"
+        "• silk or fabric surfaces\n"
+        "• minimalist studio stands\n"
+        "• polished reflective surfaces\n"
+        "• busy or colourful organic textures\n"
+        "• pure white isolated catalog backgrounds"
+    )
+
+
+def _environment_luxury() -> str:
+    """Luxury Drapery — elegant folded fabric, controlled sheen."""
+    return (
+        "ENVIRONMENT & BACKDROP (NON-NEGOTIABLE):\n"
+        "Luxury drapery and silk environment.\n"
+        "Use one or more of: champagne silk, ivory silk, or an appropriate "
+        "neutral satin/silk fabric.\n"
+        "\n"
+        "Visual direction: luxury commercial jewellery photography with "
+        "elegant folded fabric and controlled fabric sheen. The jewellery "
+        "remains the dominant subject.\n"
+        "\n"
+        "The fabric should have realistic folds, controlled sheen, and "
+        "natural draping. Do not let the fabric compete with the jewellery.\n"
+        "\n"
+        "Do NOT generate:\n"
+        "• raw organic textures (slate, concrete)\n"
+        "• minimalist studio stands\n"
+        "• busy or cluttered surfaces\n"
+        "• brightly coloured fabrics\n"
+        "• pure white isolated catalog backgrounds"
+    )
+
+
+ENVIRONMENT_INSTRUCTIONS: dict[str, object] = {
+    "minimalist": _environment_minimalist,
+    "organic": _environment_organic,
+    "luxury": _environment_luxury,
+}
+
+
+# ─── Lighting Instructions per Archetype ───────────────────────────────
+
+def _lighting_minimalist() -> str:
+    """Lighting for Minimalist Studio."""
+    return (
+        "LIGHTING & SHADING (NON-NEGOTIABLE):\n"
+        "Soft controlled studio lighting appropriate to a minimalist "
+        "studio environment.\n"
+        "\n"
+        "• Balanced highlights across the jewellery.\n"
+        "• Clean metal-edge definition.\n"
+        "• Realistic contact shadow where jewellery meets the surface.\n"
+        "• Controlled gemstone brilliance — visible facet detail without "
+        "blown highlights.\n"
+        "• Subtle environmental reflections on polished metal surfaces "
+        "consistent with a clean studio setting.\n"
+        "\n"
+        "Avoid:\n"
+        "• directional dramatic lighting\n"
+        "• high-contrast shadows\n"
+        "• warm/cool colour tinting\n"
+        "• excessive sparkle or artificial brilliance\n"
+        "• flat lighting that hides product detail\n"
+        "• unrealistic CGI reflections\n"
+        "\n"
+        "Lighting must reveal the product without changing its appearance."
+    )
+
+
+def _lighting_organic() -> str:
+    """Lighting for Organic Still Life."""
+    return (
+        "LIGHTING & SHADING (NON-NEGOTIABLE):\n"
+        "Directional light appropriate to a raw organic still life.\n"
+        "\n"
+        "• Directional key light creating controlled contrast.\n"
+        "• Realistic shadows consistent with natural material surfaces.\n"
+        "• Gemstone detail and material response preserved under "
+        "directional illumination.\n"
+        "• Controlled reflections on polished metal surfaces consistent "
+        "with the organic environment.\n"
+        "• Realistic contact shadow where jewellery rests on the surface.\n"
+        "\n"
+        "Avoid:\n"
+        "• flat or omnidirectional lighting\n"
+        "• excessive specular highlights\n"
+        "• warm/cool colour tinting that changes product colour\n"
+        "• artificial sparkle or CGI plastic appearance\n"
+        "• lighting that obscures the product\n"
+        "\n"
+        "Lighting must reveal the product without changing its appearance."
+    )
+
+
+def _lighting_luxury() -> str:
+    """Lighting for Luxury Drapery."""
+    return (
+        "LIGHTING & SHADING (NON-NEGOTIABLE):\n"
+        "Soft grazing directional light appropriate to luxury silk/satin "
+        "drapery.\n"
+        "\n"
+        "• Soft grazing directional light revealing fabric texture and "
+        "controlled sheen.\n"
+        "• Controlled reflections on polished metal surfaces consistent "
+        "with the silk environment.\n"
+        "• Readable metal and gemstone detail under soft directional "
+        "illumination.\n"
+        "• Realistic fabric sheen without overpowering the jewellery.\n"
+        "• Realistic contact shadow where jewellery rests on or near "
+        "the fabric.\n"
+        "\n"
+        "Avoid:\n"
+        "• harsh directional lighting\n"
+        "• excessive fabric sheen that competes with jewellery\n"
+        "• warm/cool colour tinting that changes product colour\n"
+        "• artificial sparkle or CGI plastic appearance\n"
+        "• flat lighting that hides product detail\n"
+        "\n"
+        "Lighting must reveal the product without changing its appearance."
+    )
+
+
+LIGHTING_INSTRUCTIONS: dict[str, object] = {
+    "minimalist": _lighting_minimalist,
+    "organic": _lighting_organic,
+    "luxury": _lighting_luxury,
+}
+
+
+# ─── Negative Constraints ──────────────────────────────────────────────
+
+NEGATIVE_CONSTRAINTS = (
+    "NEGATIVE CONSTRAINTS (NON-NEGOTIABLE):\n"
+    "Prevent the following failure modes:\n"
+    "• on-ear, human model, earlobe, human ear\n"
+    "• skin texture, jawline, neck, portrait framing\n"
+    "• subsurface skin scattering, anatomical deformation\n"
+    "• distorted jewellery geometry\n"
+    "• altered product proportions\n"
+    "• altered prong count\n"
+    "• altered gemstone count\n"
+    "• altered gemstone cuts\n"
+    "• missing gemstones\n"
+    "• additional gemstones\n"
+    "• blurry gemstones\n"
+    "• floating product\n"
+    "• missing contact shadows\n"
+    "• unrealistic grounding\n"
+    "• artificial CGI plastic look\n"
+    "• flat lighting\n"
+    "• duplicated jewellery\n"
+    "• unrelated accessories\n"
+    "• redesigned jewellery"
+)
+
+
 # ─── Complete Prompt Builder ───────────────────────────────────────────
+
 def build_professional_shot_prompt(
     earring_type: Optional[str] = None,
+    environment: str = "minimalist",
 ) -> str:
-    """Build the single authoritative Prompt 4 Professional Shot prompt.
+    """Build the single authoritative Prompt 4 Professional Commercial
+    Photography prompt with dynamic environment selection.
 
     This is the complete prompt that gets sent as the user prompt to
     /api/generate-image.  The ImageGenerationManager will auto-append
@@ -66,63 +285,86 @@ def build_professional_shot_prompt(
         earring_type: Optional earring type ("Hoop", "Stud", "Dangle").
             When provided, type-specific preservation rules are included.
             When None, generic earring preservation rules are used.
+        environment: Environment archetype. Must be one of:
+            "minimalist", "organic", "luxury".
+            Defaults to "minimalist".
 
     Returns:
-        The complete Prompt 4 Professional Shot prompt string.
+        The complete Prompt 4 Professional Commercial Photography
+        prompt string.
     """
+    # Validate environment
+    if environment not in VALID_ENVIRONMENTS:
+        environment = "minimalist"
+
+    label = ENVIRONMENT_LABELS[environment]
+    env_fn = ENVIRONMENT_INSTRUCTIONS[environment]
+    light_fn = LIGHTING_INSTRUCTIONS[environment]
+
     parts: list[str] = []
 
     # ── Header ──────────────────────────────────────────────────
     parts.append(
-        "TASK: Professional / Editorial Luxury Jewelry Studio Photography.\n"
-        "Use the uploaded jewellery as the exact product source of truth.\n"
-        "Create a premium realistic luxury studio environment for the "
-        "jewellery from the provided reference image.\n"
-        "The jewellery is the primary visual subject, professionally "
-        "photographed in a premium studio setting."
+        f"TASK: Professional Commercial Earring Photography & "
+        f"Dynamic Environment Engine.\n"
+        f"\n"
+        f"Environment: {label}\n"
+        f"\n"
+        f"Generate a professional commercial photograph of the exact "
+        f"earring from the uploaded reference image, placed in a "
+        f"premium professional studio/tabletop environment matching "
+        f"the selected archetype.\n"
+        f"The result must look like high-end professional commercial "
+        f"jewellery photography."
     )
 
     # ── Reference Priority (prevents backend double-appendition) ──
     parts.append(REFERENCE_PRIORITY_MARKER)
 
-    # ── Product Fidelity — Absolute Priority ────────────────────
+    # ── Product Fidelity — Highest Priority ─────────────────────
     parts.append(
-        "PRODUCT FIDELITY — ABSOLUTE PRIORITY:\n"
+        "PRODUCT FIDELITY — HIGHEST PRIORITY (NON-NEGOTIABLE):\n"
         "The uploaded reference image is the single source of truth for "
         "the jewellery.\n"
-        "Preserve the original product exactly.\n"
+        "Preserve the exact visible product characteristics:\n"
         "\n"
-        "Preserve:\n"
-        "- exact product geometry\n"
-        "- exact silhouette\n"
-        "- gemstone count\n"
-        "- gemstone placement\n"
-        "- gemstone cuts and facet structure\n"
-        "- prong settings\n"
-        "- micro-pave details\n"
-        "- bead arrangement\n"
-        "- hanging components\n"
-        "- hooks and connectors\n"
-        "- metal structure\n"
-        "- silver/white-gold appearance\n"
-        "- original proportions\n"
-        "- distinctive product details\n"
+        "Preserve EXACTLY:\n"
+        "• overall earring identity\n"
+        "• geometry\n"
+        "• shape\n"
+        "• proportions\n"
+        "• metal structure\n"
+        "• metal colour\n"
+        "• bezel geometry\n"
+        "• prong count\n"
+        "• prong placement\n"
+        "• gemstone count\n"
+        "• gemstone placement\n"
+        "• gemstone shape\n"
+        "• facet/cut characteristics\n"
+        "• visible construction details\n"
+        "• hooks/posts\n"
+        "• links and joints\n"
+        "• asymmetry\n"
+        "• existing physical characteristics\n"
+        "\n"
+        "Zero intentional product redesign is allowed.\n"
         "\n"
         "Do NOT:\n"
-        "- redesign the jewellery\n"
-        "- reconstruct into a similar product\n"
-        "- add stones\n"
-        "- remove stones\n"
-        "- duplicate stones\n"
-        "- merge components\n"
-        "- change metal color\n"
-        "- change geometry\n"
-        "- beautify into a different design\n"
-        "- invent missing details\n"
-        "- simplify detailed components\n"
+        "• add gemstones\n"
+        "• remove gemstones\n"
+        "• move gemstones\n"
+        "• change gemstone cuts\n"
+        "• alter prongs\n"
+        "• change bezel geometry\n"
+        "• change metal colour\n"
+        "• change material\n"
+        "• change proportions\n"
+        "• beautify the jewellery\n"
+        "• make the jewellery more symmetrical\n"
+        "• invent missing product details\n"
+        "• replace the product with a similar jewellery design\n"
         "\n"
-        "Every visible stone, bead, prong, connector, clasp, hook, link, and "
-        "structural element must correspond to the reference image.\n"
         "If any detail is unclear in the reference, DO NOT invent a "
         "replacement detail."
     )
@@ -131,14 +373,14 @@ def build_professional_shot_prompt(
     parts.append(
         "ANTI-REDESIGN RULE (NON-NEGOTIABLE):\n"
         "This is a PRODUCT PHOTOGRAPHY task, NOT a design task.\n"
-        "You are photographing the EXACT uploaded product in a professional "
-        "studio setting. You are NOT designing a new earring, creating an "
-        "inspired variation, or improving a product.\n"
+        "You are placing the EXACT uploaded earring into a professional "
+        "studio/tabletop environment. You are NOT designing a new earring, "
+        "creating an inspired variation, or improving a product.\n"
         "The generated image must show the EXACT same product — same shape, "
         "same stones, same metal, same proportions, same craftsmanship, "
         "same asymmetry, same imperfections.\n"
-        "Only the presentation changes: background, lighting, composition, "
-        "and commercial quality."
+        "The camera perspective changes to a professional commercial "
+        "product-photography view. The jewellery must not change."
     )
 
     # ── Anti-Symmetry (CRITICAL — Phase 4D failure mode) ────────
@@ -181,169 +423,125 @@ def build_professional_shot_prompt(
     # ── Colour Lock (Task 3 validated — 41% gold shift reduction) ─
     parts.append(COLOUR_LOCK_INSTRUCTION)
 
-    # ── Size & Proportion ──────────────────────────────────────
+    # ── Environment-Specific Environment ────────────────────────
+    parts.append(env_fn())  # type: ignore[operator]
+
+    # ── Environment-Specific Lighting ───────────────────────────
+    parts.append(light_fn())  # type: ignore[operator]
+
+    # ── Optical Style ───────────────────────────────────────────
     parts.append(
-        "SIZE & PROPORTION (NON-NEGOTIABLE):\n"
-        "Maintain the jewellery's original proportions from the reference.\n"
-        "Do not make the jewellery unnaturally large, small, elongated, "
-        "compressed, widened, thickened, or otherwise distorted.\n"
-        "The output should look like the SAME physical jewellery "
-        "photographed professionally in a luxury studio.\n"
+        "OPTICAL STYLE (NON-NEGOTIABLE):\n"
+        "Professional macro product photography.\n"
+        "Approximately 100mm macro visual perspective and f/4 "
+        "depth-of-field appearance.\n"
+        "Keep the jewellery sharply resolved with controlled photographic "
+        "depth of field.\n"
         "\n"
-        "Preserve relative dimensions between every component.\n"
-        "Do not exaggerate or minimize any element for visual impact.\n"
-        "PRODUCT FIDELITY HAS PRIORITY OVER VISUAL STYLING."
+        "Note: These values are visual photographic guidance, not guaranteed "
+        "physical camera parameters. Treat them as direction for the "
+        "visual aesthetic.\n"
+        "\n"
+        "Maintain:\n"
+        "• clear gemstone detail\n"
+        "• clear prongs/settings\n"
+        "• readable metal edges\n"
+        "• realistic depth of field\n"
+        "\n"
+        "Avoid:\n"
+        "• blurry gemstones\n"
+        "• excessive depth-of-field blur that hides the jewellery\n"
+        "• artificial sharpening that invents product detail"
     )
 
-    # ── Negative Space ──────────────────────────────────────────
+    # ── Gemstone Presentation ───────────────────────────────────
     parts.append(
-        "NEGATIVE SPACE — HARD REQUIREMENT (NON-NEGOTIABLE):\n"
-        "The reference jewellery contains intentional OPEN / EMPTY areas. "
-        "These are structural features, not gaps to fill.\n"
+        "GEMSTONE PRESENTATION (NON-NEGOTIABLE):\n"
+        "Gemstones should have:\n"
+        "• clear detail\n"
+        "• realistic facet visibility\n"
+        "• controlled brilliance\n"
+        "• realistic optical response\n"
+        "• appropriate dispersion where naturally visible\n"
         "\n"
-        "You MUST preserve every open/hollow region:\n"
-        "• Hollow crescent or open wireframe structures must remain hollow.\n"
-        "• Open centres of circular or geometric frames must remain empty.\n"
-        "• Spaces between hanging elements must remain separate.\n"
-        "• Gaps between bead clusters must remain visible.\n"
-        "• Openwork, filigree, or cut-out patterns must stay open.\n"
+        "Avoid:\n"
+        "• excessive artificial sparkle\n"
+        "• glowing gemstones\n"
+        "• blown highlights on gemstones\n"
+        "• fake gemstone geometry\n"
+        "• altered gemstone cuts\n"
         "\n"
-        "DO NOT fill any internal void with:\n"
-        "• Gold or metal material\n"
-        "• Skin or flesh tone\n"
-        "• Background colour\n"
-        "• Gemstone material\n"
-        "• Decorative texture or pattern\n"
-        "• Shadow or shading\n"
-        "\n"
-        "The empty space IS part of the jewellery geometry. Filling it "
-        "changes the product identity."
+        "Visual enhancement must never change the actual product."
     )
 
-    # ── Bead / Pearl Cluster Preservation ───────────────────────
+    # ── Environment Interaction ─────────────────────────────────
     parts.append(
-        "BEAD AND PEARL CLUSTER PRESERVATION (NON-NEGOTIABLE):\n"
-        "If the reference jewellery contains bead clusters, pearl groups, "
-        "or dangling bead arrangements:\n"
+        "ENVIRONMENT INTERACTION (NON-NEGOTIABLE):\n"
+        "Allow the selected environment to influence realistic lighting, "
+        "reflections, shadows, and visual context without changing the "
+        "underlying jewellery geometry or product identity.\n"
         "\n"
-        "• Each individual bead/pearl must remain visually "
-        "distinguishable — no merging, fusing, or melting.\n"
-        "• Bead clusters must retain their individual separation — gaps "
-        "between beads are part of the design.\n"
-        "• Large faceted teardrop drops must remain individually "
-        "identifiable — each drop is a separate component.\n"
-        "• Hanging bead arrangements must preserve the exact count and "
-        "relative positioning.\n"
-        "• Bead sizes must match the reference — do not enlarge small "
-        "beads or shrink large ones.\n"
+        "• Dynamic environment lighting/reflection should visually affect "
+        "polished metal surfaces while preserving the underlying jewellery "
+        "geometry.\n"
+        "• Represent environmental reflections as prompt-level photographic "
+        "guidance — the image model should render realistic reflections "
+        "consistent with the selected environment.\n"
+        "• The jewellery's metal surfaces should show subtle reflections "
+        "consistent with the surrounding environment.\n"
         "\n"
-        "DO NOT allow:\n"
-        "• Fused beads that merge into a single mass\n"
-        "• Melted or blob-like bead clusters\n"
-        "• Missing drops that were present in the reference\n"
-        "• Invented drops that were not in the reference\n"
-        "• Random bead blobs replacing structured clusters"
+        "Do NOT:\n"
+        "• change jewellery geometry to match environment reflections\n"
+        "• add artificial ray-traced reflections\n"
+        "• override product identity with environment styling"
     )
 
-    # ── Studio Environment (non-negotiable) ────────────────────
+    # ── Grounding & Contact Shadows ─────────────────────────────
     parts.append(
-        "STUDIO ENVIRONMENT (NON-NEGOTIABLE):\n"
-        "Create a premium realistic luxury studio environment.\n"
+        "GROUNDING & CONTACT SHADOWS (NON-NEGOTIABLE):\n"
+        "• Realistic grounding — the product must appear physically "
+        "resting on or in contact with the selected environment surface.\n"
+        "• Natural contact shadows beneath the jewellery consistent "
+        "with the surface type and lighting.\n"
+        "• Realistic ambient occlusion where the jewellery meets "
+        "the surface.\n"
+        "• Product must appear physically present in the scene.\n"
         "\n"
-        "Replace the surrounding background with soft textured grey linen "
-        "fabric layered naturally over a polished light marble surface.\n"
-        "\n"
-        "The jewellery should be naturally laid flat at an approximately "
-        "45-degree editorial angle where the source geometry permits.\n"
-        "\n"
-        "Create realistic physical contact between the jewellery and the "
-        "surface.\n"
-        "\n"
-        "Maintain realistic contact shadows beneath the jewellery.\n"
-        "\n"
-        "The jewellery must remain the sharpest and primary visual subject.\n"
-        "\n"
-        "Do NOT generate:\n"
-        "• Pure flat white background\n"
-        "• White isolated catalog background\n"
-        "• White-only e-commerce presentation\n"
-        "• Plain empty canvas\n"
-        "• No background at all"
+        "Avoid:\n"
+        "• floating jewellery\n"
+        "• disconnected shadows\n"
+        "• impossible grounding\n"
+        "• excessive shadows that obscure the product\n"
+        "• shadows inconsistent with the lighting direction"
     )
 
-    # ── Lighting ────────────────────────────────────────────────
+    # ── Primary Subject ─────────────────────────────────────────
     parts.append(
-        "LIGHTING (NON-NEGOTIABLE):\n"
-        "Use diffused softbox studio lighting.\n"
-        "\n"
-        "• Highlight the natural facet reflections of the gemstones.\n"
-        "• Show realistic metallic sheen of the prongs and metal.\n"
-        "• Use gentle background falloff and realistic depth.\n"
-        "• Maintain realistic contact shadows beneath the jewellery.\n"
-        "• Controlled gemstone reflections.\n"
-        "• Realistic metallic highlights.\n"
-        "• Visible stone facets.\n"
-        "• Realistic prong reflections.\n"
-        "\n"
-        "Lighting must reveal the product. Lighting must NOT beautify, "
-        "recolour, redesign, or alter the jewellery.\n"
-        "No dramatic shadows.\n"
-        "No colored lighting.\n"
-        "No cinematic color grading.\n"
-        "No excessive highlights that hide product details."
+        "PRIMARY SUBJECT (NON-NEGOTIABLE):\n"
+        "The exact jewellery product remains the dominant subject.\n"
+        "The environment is a supporting element, not the primary focus.\n"
+        "The jewellery must be the sharpest and most visually prominent "
+        "element in the composition."
     )
 
-    # ── Strictly Forbidden ─────────────────────────────────────
-    parts.append(
-        "STRICTLY FORBIDDEN — DO NOT generate:\n"
-        "• No human model\n"
-        "• No face\n"
-        "• No hand\n"
-        "• No fingers\n"
-        "• No body parts\n"
-        "• No clothing\n"
-        "• No jewellery stand\n"
-        "• No box\n"
-        "• No flowers\n"
-        "• No decorative props\n"
-        "• No text\n"
-        "• No logo\n"
-        "• No watermark\n"
-        "• No additional objects\n"
-        "• No pure white background\n"
-        "• No white isolated catalog shot\n"
-        "• No plain empty canvas\n"
-        "• No redesigned jewellery\n"
-        "• No altered jewellery proportions\n"
-        "• No different stones\n"
-        "• No missing beads\n"
-        "• No extra beads\n"
-        "• No changed metal color\n"
-        "• No changed clasp\n"
-        "• No changed hook\n"
-        "• No changed pin/post\n"
-        "• No deformed geometry\n"
-        "• No stretched jewellery\n"
-        "• No resized jewellery\n"
-        "• No floating jewellery"
-    )
+    # ── Negative Constraints ────────────────────────────────────
+    parts.append(NEGATIVE_CONSTRAINTS)
 
     # ── Image Quality ───────────────────────────────────────────
     parts.append(
         "OUTPUT STYLE:\n"
-        "Premium professional editorial jewellery photography.\n"
-        "Luxury studio aesthetic.\n"
-        "Accurate.\n"
-        "Product-focused.\n"
+        "Professional commercial jewellery photography.\n"
+        "Premium studio/tabletop aesthetic.\n"
+        "Product detail-focused.\n"
         "Editorial quality.\n"
         "\n"
-        "The product itself is more important than visual styling.\n"
+        "The jewellery is the primary visual subject.\n"
         "\n"
         "IMAGE QUALITY:\n"
-        "• Photorealistic professional studio photography.\n"
-        "• Extremely sharp jewellery details.\n"
-        "• Preserve fine stones, beads, metal edges, texture, hooks, "
-        "posts, and structural details.\n"
+        "• High-end professional macro jewellery photography.\n"
+        "• Extremely sharp jewellery details where in focus.\n"
+        "• Preserve fine stones, metal edges, texture, hooks, posts, "
+        "and structural details.\n"
         "• High-resolution output.\n"
         "• Preferred aspect ratio: 4:5."
     )
@@ -354,20 +552,18 @@ def build_professional_shot_prompt(
         "verify:\n"
         "\n"
         "1. Is the jewellery the EXACT same product as the reference?\n"
-        "2. Are all stones, beads, metal components, hooks, posts, clasps, "
+        "2. Are all gemstones, prongs, metal components, hooks, posts, "
         "and structural details preserved?\n"
         "3. Has the jewellery's original size/proportion remained unchanged?\n"
-        "4. Is there absolutely NO human model, face, hand, or body part?\n"
-        "5. Is there absolutely NO prop, box, flower, stand, or decorative "
-        "element?\n"
-        "6. Is the background a realistic grey linen + light marble "
-        "environment?\n"
-        "7. Is there NO pure white background or isolated white canvas?\n"
-        "8. Is the jewellery naturally laid flat on the surface?\n"
-        "9. Are there realistic contact shadows beneath the jewellery?\n"
-        "10. Is the product the sharpest and primary visual subject?\n"
-        "11. Does the image look like a premium professional studio "
-        "photograph?\n"
+        "4. Is the environment consistent with the selected archetype?\n"
+        "5. Are there realistic contact shadows beneath the jewellery?\n"
+        "6. Is the jewellery the sharpest element in the image?\n"
+        "7. Is the environment subordinate to the jewellery?\n"
+        "8. Do metal surfaces show realistic environmental reflections?\n"
+        "9. Does the image look like professional commercial jewellery "
+        "photography?\n"
+        "10. Is there absolutely NO human model, ear, skin, or anatomy "
+        "visible?\n"
         "\n"
         "If any answer is NO, correct the composition before generating the "
         "final image."
