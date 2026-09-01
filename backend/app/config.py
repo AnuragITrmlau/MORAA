@@ -128,6 +128,18 @@ class Settings(BaseSettings):
     # labels, text, packaging, hands holding product) are applied independently.
     PFIE_SCALE_CONTROL_ENABLED: bool = True
 
+    # --- Meta WhatsApp Cloud API ---
+    # Webhook verification token (set in Meta developer dashboard)
+    META_VERIFY_TOKEN: str = ""
+    # Permanent access token for the WhatsApp Business account
+    META_WHATSAPP_TOKEN: str = ""
+    # Phone number ID from the Meta Business account
+    META_PHONE_NUMBER_ID: str = ""
+    # App secret for webhook signature validation (X-Hub-Signature-256)
+    META_APP_SECRET: str = ""
+    # Maximum WhatsApp image download size (bytes) — 5 MB safety limit
+    META_MAX_MEDIA_BYTES: int = 5 * 1024 * 1024
+
     # --- Image Preprocessing ---
     # Max dimension (pixels) for image resizing before AI analysis
     PREPROCESS_MAX_DIMENSION: int = 2048

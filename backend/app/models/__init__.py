@@ -14,6 +14,7 @@ from app.models.processing_log import ProcessingLog
 from app.models.tool_execution import ToolExecutionLog
 from app.models.retry_history import RetryHistory
 from app.models.version_history import VersionHistory
+from app.models.whatsapp_ingestion import WhatsAppIngestion
 
 __all__ = [
     "User",
@@ -26,4 +27,5 @@ __all__ = [
     "ToolExecutionLog",
     "RetryHistory",
     "VersionHistory",
+    "WhatsAppIngestion",
 ]

@@ -66,6 +66,7 @@ def init_db() -> None:
         ToolExecutionLog,
         User,
         VersionHistory,
+        WhatsAppIngestion,
     )
 
     Base.metadata.create_all(bind=engine)
