@@ -78,6 +78,31 @@ def parse_webhook_entry(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "timestamp": timestamp,
                     "body": text_data.get("body", ""),
                 })
+            elif msg_type == "interactive":
+                interactive_data = message.get("interactive", {})
+                interactive_type = interactive_data.get("type", "")
+                button_reply = interactive_data.get("button_reply", {})
+
+                if interactive_type == "button_reply":
+                    events.append({
+                        "type": "interactive",
+                        "subtype": "button_reply",
+                        "message_id": msg_id,
+                        "sender": sender,
+                        "timestamp": timestamp,
+                        "button_reply": {
+                            "id": button_reply.get("id", ""),
+                            "title": button_reply.get("title", ""),
+                        },
+                    })
+                else:
+                    events.append({
+                        "type": "unsupported",
+                        "message_id": msg_id,
+                        "sender": sender,
+                        "timestamp": timestamp,
+                        "raw_type": f"interactive:{interactive_type}",
+                    })
             else:
                 events.append({
                     "type": "unsupported",
@@ -243,15 +268,131 @@ def verify_webhook_signature(
     return True
 
 
+# ─── Interactive button message ─────────────────────────────────────────
+
+
+async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) -> bool:
+    """Send an interactive button message to the user asking them to select a style.
+
+    Button layout:
+        Button 1: "Clean E-Commerce" (ID: "prompt_ecommerce:<ingestion_id>")
+        Button 2: "Close-up on Ear" (ID: "prompt_close_up:<ingestion_id>")
+        Button 3: "UGC Lifestyle"     (ID: "prompt_ugc:<ingestion_id>")
+    """
+    if not settings.META_WHATSAPP_TOKEN:
+        logger.error("META_WHATSAPP_TOKEN not configured — cannot send button message")
+        return False
+
+    if not settings.META_PHONE_NUMBER_ID:
+        logger.error("META_PHONE_NUMBER_ID not configured — cannot send button message")
+        return False
+
+    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+
+    prompt_ecommerce_id = f"prompt_ecommerce:{ingestion_id}"
+    prompt_close_up_id = f"prompt_close_up:{ingestion_id}"
+    prompt_ugc_id = f"prompt_ugc:{ingestion_id}"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": (
+                    "Please select the style for your earring image:\n"
+                    "• Clean E-Commerce — catalog product shot on neutral backdrop\n"
+                    "• Close-up on Ear — macro close-up worn on a model's ear\n"
+                    "• UGC Lifestyle — authentic customer-style lifestyle photo"
+                ),
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": prompt_ecommerce_id,
+                            "title": "Clean E-Commerce",
+                        },
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": prompt_close_up_id,
+                            "title": "Close-up on Ear",
+                        },
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": prompt_ugc_id,
+                            "title": "UGC Lifestyle",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Meta send button message failed: status={response.status_code}"
+                )
+                return False
+
+            data = response.json()
+            messages = data.get("messages", [])
+            if not messages:
+                logger.error(f"Meta send button message response missing 'messages': {data}")
+                return False
+
+            logger.info(
+                f"Meta button message sent: recipient={recipient_id} "
+                f"message_id={messages[0].get('id', '')} "
+                f"ingestion_id={ingestion_id}"
+            )
+            return True
+
+    except httpx.TimeoutException:
+        logger.error("Meta send button message timed out")
+        return False
+    except Exception as e:
+        logger.error(f"Meta send button message failed: {e}")
+        return False
+
+
 # ─── Generation trigger ──────────────────────────────────────────────────
 
 
-async def process_whatsapp_generation(ingestion_id: str) -> bool:
-    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion."""
+async def process_whatsapp_generation(
+    ingestion_id: str,
+    prompt_type: str = "prompt_ecommerce",
+) -> bool:
+    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion.
+
+    Args:
+        ingestion_id: The WhatsAppIngestion record ID.
+        prompt_type: One of "prompt_ecommerce", "prompt_close_up", or "prompt_ugc".
+            Defaults to "prompt_ecommerce" for backward compatibility.
+    """
     from app.database import SessionLocal
     from app.models.image import Image
     from app.models.whatsapp_ingestion import WhatsAppIngestion
     from app.services.earring_ecommerce_prompt import build_earring_ecommerce_prompt
+    from app.services.earring_close_up_ears_prompt import build_close_up_ears_prompt
+    from app.services.earring_ugc_style_prompt import build_ugc_style_prompt
     from app.ai.image_generation_manager import ImageGenerationManager
 
     db = SessionLocal()
@@ -264,10 +405,13 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             logger.error(f"WhatsApp generation: ingestion not found: {ingestion_id}")
             return False
 
-        if ingestion.status not in ("stored", "failed"):
+        # Only block in-flight runs: terminal/awaiting states (stored, failed,
+        # awaiting_selection, generated, delivered, delivery_failed) may all
+        # re-run so the user can pick a different style for the same image.
+        if ingestion.status == "processing":
             logger.info(
                 f"WhatsApp generation: skipping ingestion {ingestion_id} "
-                f"(status={ingestion.status}) — already processed"
+                f"(status={ingestion.status}) — already in progress"
             )
             return False
 
@@ -277,7 +421,8 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
 
         logger.info(
             f"WhatsApp generation started: ingestion_id={ingestion_id} "
-            f"request_id={ingestion.request_id} user={ingestion.external_user_id}"
+            f"request_id={ingestion.request_id} user={ingestion.external_user_id} "
+            f"prompt_type={prompt_type}"
         )
 
         image_record = db.query(Image).filter(
@@ -305,12 +450,31 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"{len(reference_image_bytes)} bytes from {image_path}"
         )
 
-        prompt = build_earring_ecommerce_prompt()
-
-        logger.info(
-            f"WhatsApp generation: built Prompt 1 "
-            f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
-        )
+        # ── Route to the correct prompt builder based on prompt_type ───
+        if prompt_type == "prompt_ecommerce":
+            prompt = build_earring_ecommerce_prompt()
+            logger.info(
+                f"WhatsApp generation: built Prompt 1 (E-Commerce) "
+                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
+            )
+        elif prompt_type == "prompt_close_up":
+            prompt = build_close_up_ears_prompt()
+            logger.info(
+                f"WhatsApp generation: built Prompt 2 (Close-up on Ear) "
+                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
+            )
+        elif prompt_type == "prompt_ugc":
+            prompt = build_ugc_style_prompt()
+            logger.info(
+                f"WhatsApp generation: built Prompt 6 (UGC Lifestyle) "
+                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
+            )
+        else:
+            logger.warning(
+                f"Unknown prompt_type '{prompt_type}' — falling back to prompt_ecommerce "
+                f"ingestion_id={ingestion_id}"
+            )
+            prompt = build_earring_ecommerce_prompt()
 
         manager = ImageGenerationManager()
         result = await manager.generate_image(
@@ -356,9 +520,18 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"media_id={media_id[:20]}... request_id={ingestion.request_id}"
         )
 
+        # Caption reflects the style selected via the button reply
+        caption_map = {
+            "prompt_ecommerce": "Your e-commerce image is ready.",
+            "prompt_close_up": "Your Close-up on Ear image is ready.",
+            "prompt_ugc": "Your UGC Lifestyle image is ready.",
+        }
+        send_caption = caption_map.get(prompt_type, "Your e-commerce image is ready.")
+
         send_ok = await send_image_to_whatsapp(
             recipient_id=ingestion.external_user_id,
             media_id=media_id,
+            caption=send_caption,
         )
 
         if not send_ok:
@@ -490,6 +663,7 @@ async def upload_media_to_meta(
 async def send_image_to_whatsapp(
     recipient_id: str,
     media_id: str,
+    caption: str = "Your e-commerce image is ready.",
 ) -> bool:
     """Send an image message to a WhatsApp user via Meta Send API."""
     if not settings.META_WHATSAPP_TOKEN:
@@ -510,7 +684,7 @@ async def send_image_to_whatsapp(
         "type": "image",
         "image": {
             "id": media_id,
-            "caption": "Your e-commerce image is ready.",
+            "caption": caption,
         },
     }
 

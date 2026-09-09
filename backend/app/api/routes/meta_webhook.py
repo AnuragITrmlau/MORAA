@@ -4,7 +4,7 @@ Implements the official WhatsApp webhook verification and event reception
 endpoints. Ingests incoming WhatsApp images and forwards to AI generation.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import json
 import traceback
 
@@ -21,6 +21,7 @@ from app.services.meta_whatsapp_service import (
     get_media_url,
     parse_webhook_entry,
     process_whatsapp_generation,
+    send_prompt_selection_buttons,
     validate_image,
     verify_webhook_signature,
 )
@@ -43,6 +44,103 @@ async def _trigger_generation(ingestion_id: str) -> None:
             logger.warning(f"Background generation failed: ingestion_id={ingestion_id}")
     except Exception as e:
         logger.error(f"Background generation exception: ingestion_id={ingestion_id} error={e}")
+
+
+def _handle_button_reply(
+    event: Dict[str, Any],
+    db: Session,
+) -> Optional[Tuple[str, str]]:
+    """Handle an interactive button_reply event.
+
+    Parses button_reply.id (format "prompt_type:ingestion_id") and validates
+    the prompt type. Any button click on a known ingestion is honoured —
+    including re-clicks for the same image — so every style selection
+    schedules a new generation. Returns (prompt_type, ingestion_id) when
+    generation should be scheduled, otherwise None. The caller is responsible
+    for enqueueing generation as a background task.
+    """
+    button_reply = event.get("button_reply", {})
+    button_id = button_reply.get("id", "")
+    button_title = button_reply.get("title", "")
+    sender = event.get("sender", "")
+    message_id = event.get("message_id", "")
+
+    if not button_id:
+        logger.warning(
+            f"Button reply missing id: sender={sender} message_id={message_id[:20]}..."
+        )
+        return
+
+    # ── Parse button_id: expected format "prompt_<type>:<ingestion_id>" ──
+    # e.g. "prompt_ecommerce:abc-123", "prompt_close_up:abc-123", "prompt_ugc:abc-123"
+    parts = button_id.split(":", 1)
+    if len(parts) != 2:
+        logger.warning(
+            f"Invalid button_reply.id format (expected 'prompt_type:ingestion_id'): "
+            f"id={button_id}"
+        )
+        return
+
+    prompt_type_raw = parts[0]
+    ingestion_id = parts[1]
+
+    if not ingestion_id:
+        logger.warning(f"Empty ingestion_id in button_reply.id: id={button_id}")
+        return
+
+    # ── Map button ID prefix to prompt_type ───────────────────────────────
+    # Accepted values: prompt_ecommerce, prompt_close_up, prompt_ugc
+    prompt_type = prompt_type_raw  # already in the form "prompt_*"
+
+    if prompt_type not in ("prompt_ecommerce", "prompt_close_up", "prompt_ugc"):
+        logger.warning(
+            f"Unknown prompt type in button_reply: type={prompt_type} "
+            f"ingestion_id={ingestion_id}"
+        )
+        return
+
+    logger.info(
+        f"Button reply received: sender={sender} "
+        f"message_id={message_id[:20]}... "
+        f"button='{button_title}' "
+        f"prompt_type={prompt_type} "
+        f"ingestion_id={ingestion_id}"
+    )
+
+    # ── Validate ingestion exists with image data ─────────────────────────
+    # Every button click is honoured (including re-clicks for the same image)
+    # so a style can be generated multiple times. process_whatsapp_generation
+    # guards against in-flight duplicates via its own status check.
+    try:
+        ingestion_repo = BaseRepository(WhatsAppIngestion, db)
+        existing = ingestion_repo.find_first(id=ingestion_id)
+        if not existing:
+            logger.warning(
+                f"Button reply references unknown ingestion: ingestion_id={ingestion_id}"
+            )
+            return
+
+        if not existing.image_id:
+            logger.warning(
+                f"Button reply references ingestion without image data: "
+                f"ingestion_id={ingestion_id}"
+            )
+            return
+
+    except Exception as e:
+        logger.error(f"Button reply ingestion lookup failed: {e}")
+        db.rollback()
+        return
+
+    # ── Signal that generation should be scheduled ───────────────────────
+    # The webhook must return 200 immediately. process_whatsapp_generation
+    # manages its own DB session and error handling when it runs as a
+    # background task after the response is sent.
+    logger.info(
+        f"Button reply scheduled for generation: "
+        f"ingestion_id={ingestion_id} prompt_type={prompt_type}"
+    )
+    return prompt_type, ingestion_id
 
 
 # ─── GET — Webhook Verification ──────────────────────────────────────────
@@ -101,7 +199,8 @@ async def verify_webhook(
     summary="Receive WhatsApp webhook events",
     description=(
         "Receives inbound WhatsApp events from Meta. "
-        "Image messages are ingested and stored. Other events are acknowledged. "
+        "Image messages are ingested, stored, and a prompt selection button message "
+        "is sent to the user. Button replies trigger the generation pipeline. "
         "Returns 200 OK immediately after safe acceptance."
     ),
 )
@@ -143,7 +242,9 @@ async def receive_webhook(
     # ── Process each entry ─────────────────────────────────────────────
     ingestion_repo = BaseRepository(WhatsAppIngestion, db)
     image_count = 0
-    processed_count = 0
+    stored_count = 0
+    button_sent_count = 0
+    button_reply_count = 0
     skipped_count = 0
 
     for entry in entries:
@@ -152,6 +253,7 @@ async def receive_webhook(
         for event in events:
             event_type = event.get("type", "")
 
+            # ── Status events ──────────────────────────────────────────
             if event_type == "status":
                 logger.info(
                     f"Status event: message_id={event.get('message_id', '')[:20]} "
@@ -159,6 +261,7 @@ async def receive_webhook(
                 )
                 continue
 
+            # ── Text messages ──────────────────────────────────────────
             if event_type == "text":
                 logger.info(
                     f"Text message received: sender={event.get('sender', '')} "
@@ -166,6 +269,32 @@ async def receive_webhook(
                 )
                 continue
 
+            # ── Interactive button replies ─────────────────────────────
+            if event_type == "interactive" and event.get("subtype") == "button_reply":
+                button_reply_count += 1
+                button_selection = _handle_button_reply(event, db)
+                if button_selection:
+                    prompt_type, ingestion_id = button_selection
+                    background_tasks.add_task(
+                        process_whatsapp_generation,
+                        ingestion_id,
+                        prompt_type,
+                    )
+                    logger.info(
+                        f"Generation queued via background task: "
+                        f"ingestion_id={ingestion_id} prompt_type={prompt_type}"
+                    )
+                continue
+
+            # ── Unsupported interactive types ──────────────────────────
+            if event_type == "interactive":
+                logger.info(
+                    f"Unsupported interactive event: subtype={event.get('subtype', '')} "
+                    f"sender={event.get('sender', '')}"
+                )
+                continue
+
+            # ── Unsupported message types ──────────────────────────────
             if event_type == "unsupported":
                 logger.info(
                     f"Unsupported event type: raw_type={event.get('raw_type', '')} "
@@ -173,6 +302,7 @@ async def receive_webhook(
                 )
                 continue
 
+            # ── Image messages ─────────────────────────────────────────
             if event_type != "image":
                 continue
 
@@ -339,7 +469,7 @@ async def receive_webhook(
                 )
                 db.commit()
 
-                processed_count += 1
+                stored_count += 1
                 logger.info(
                     f"WhatsApp image ingested successfully: "
                     f"ingestion_id={ingestion.id} "
@@ -349,11 +479,26 @@ async def receive_webhook(
                     f"file_size={len(image_bytes)} bytes"
                 )
 
-                # ── Trigger existing GemVision generation ──────────────
-                background_tasks.add_task(
-                    _trigger_generation,
-                    ingestion.id,
+                # ── Send interactive button selection message ──────────
+                # Do NOT trigger immediate generation — wait for user button tap.
+                send_ok = await send_prompt_selection_buttons(
+                    recipient_id=sender,
+                    ingestion_id=ingestion.id,
                 )
+                if send_ok:
+                    button_sent_count += 1
+                    # Update ingestion status to awaiting_selection
+                    ingestion.status = "awaiting_selection"
+                    db.commit()
+                    logger.info(
+                        f"Prompt selection buttons sent: "
+                        f"ingestion_id={ingestion.id} user={sender}"
+                    )
+                else:
+                    logger.warning(
+                        f"Failed to send prompt selection buttons: "
+                        f"ingestion_id={ingestion.id} user={sender}"
+                    )
 
             except Exception as e:
                 db.rollback()
@@ -378,13 +523,16 @@ async def receive_webhook(
 
     logger.info(
         f"Webhook batch processed: images={image_count} "
-        f"stored={processed_count} skipped={skipped_count}"
+        f"stored={stored_count} buttons_sent={button_sent_count} "
+        f"button_replies={button_reply_count} skipped={skipped_count}"
     )
 
     return {
         "status": "ok",
         "images_received": image_count,
-        "images_stored": processed_count,
+        "images_stored": stored_count,
+        "buttons_sent": button_sent_count,
+        "button_replies_handled": button_reply_count,
         "duplicates_skipped": skipped_count,
     }
 
