@@ -1,40 +1,12 @@
 """Meta WhatsApp Cloud API webhook routes.
 
 Implements the official WhatsApp webhook verification and event reception
-endpoints. Part 2 scope: ingest incoming WhatsApp images safely.
-
-    GET  /api/meta/webhook          — Meta webhook verification (challenge)
-    POST /api/meta/webhook          — Receive inbound WhatsApp events
-    GET  /api/meta/webhook/health   — Health check
-
-Architecture::
-
-    Meta POST webhook
-        ↓
-    Signature verification (if META_APP_SECRET configured)
-        ↓
-    Parse payload → extract changes
-        ↓
-    For each image message:
-        ↓
-    Idempotency check (external_message_id → WhatsAppIngestion)
-        ↓
-    Retrieve media URL from Meta API
-        ↓
-    Download image bytes
-        ↓
-    Validate image (format, size, Pillow check)
-        ↓
-    Store via UploadService (existing GemVision storage)
-        ↓
-    Create WhatsAppIngestion record (status = "stored")
-        ↓
-    Return 200 OK to Meta
-
-Part 3 will read the ingestion record and connect it to the AI pipeline.
+endpoints. Ingests incoming WhatsApp images and forwards to AI generation.
 """
 
 from typing import Any, Dict, List, Optional
+import json
+import traceback
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
@@ -62,11 +34,7 @@ router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
 
 async def _trigger_generation(ingestion_id: str) -> None:
-    """Background task that triggers GemVision generation for a stored ingestion.
-
-    Called via BackgroundTasks after successful image ingestion.
-    This keeps the webhook response fast (< 5s) while generation runs async.
-    """
+    """Background task that triggers GemVision generation for a stored ingestion."""
     try:
         success = await process_whatsapp_generation(ingestion_id)
         if success:
@@ -94,12 +62,7 @@ async def verify_webhook(
     hub_verify_token: Optional[str] = None,
     hub_challenge: Optional[str] = None,
 ) -> PlainTextResponse:
-    """Verify webhook ownership with Meta.
-
-    This is called once when you configure the webhook URL in Meta's
-    developer dashboard. Returns the challenge token if verification
-    succeeds, or 403 Forbidden if it fails.
-    """
+    """Verify webhook ownership with Meta."""
     logger.info(
         f"Webhook verification request: mode={hub_mode} "
         f"token_provided={bool(hub_verify_token)} challenge_provided={bool(hub_challenge)}"
@@ -147,42 +110,25 @@ async def receive_webhook(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Receive and process WhatsApp webhook events from Meta.
+    """Receive and process WhatsApp webhook events safely without body-stream locks."""
 
-    Flow:
-    1. Verify webhook signature (if META_APP_SECRET configured)
-    2. Parse the webhook payload
-    3. For each image message:
-       a. Check idempotency (external_message_id already seen?)
-       b. Retrieve media from Meta API
-       c. Download the image
-       d. Validate image format/size
-       e. Store using existing UploadService
-       f. Create WhatsAppIngestion record
-    4. Return 200 OK to Meta
-    """
-    # ── Read raw body for signature verification ───────────────────────
-    try:
-        body = await request.body()
-    except Exception as e:
-        logger.error(f"Failed to read webhook body: {e}")
-        return {"status": "error", "message": "Failed to read request body"}
-
-    # ── Signature verification ─────────────────────────────────────────
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_webhook_signature(body, signature):
-        return {"status": "error", "message": "Invalid signature"}
-
-    # ── Parse JSON payload ─────────────────────────────────────────────
+    # ── Read JSON body safely ──────────────────────────────────────────
     try:
         payload = await request.json()
     except Exception as e:
-        logger.warning(f"Failed to parse webhook JSON: {e}")
+        logger.error(f"Failed to parse webhook JSON payload: {e}")
         return {"status": "error", "message": "Invalid JSON payload"}
 
-    # ── Handle verification payload (GET can sometimes arrive as POST) ─
+    # ── Optional Signature Verification (Only if App Secret is set) ───
+    if settings.META_APP_SECRET:
+        signature = request.headers.get("X-Hub-Signature-256")
+        raw_body_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+        if not verify_webhook_signature(raw_body_bytes, signature):
+            logger.warning("Webhook signature verification failed")
+            return {"status": "error", "message": "Invalid signature"}
+
+    # ── Handle verification probe ──────────────────────────────────────
     if payload.get("object") == "whatsapp_business_account" and "entry" not in payload:
-        # This is a verification probe, not a real event
         return {"status": "ok"}
 
     # ── Validate payload structure ─────────────────────────────────────
@@ -207,7 +153,6 @@ async def receive_webhook(
             event_type = event.get("type", "")
 
             if event_type == "status":
-                # Status events — acknowledge but no action needed
                 logger.info(
                     f"Status event: message_id={event.get('message_id', '')[:20]} "
                     f"status={event.get('status', '')}"
@@ -215,7 +160,6 @@ async def receive_webhook(
                 continue
 
             if event_type == "text":
-                # Text messages — acknowledge, no image to process
                 logger.info(
                     f"Text message received: sender={event.get('sender', '')} "
                     f"body_len={len(event.get('body', ''))}"
@@ -246,62 +190,92 @@ async def receive_webhook(
             )
 
             # ── Idempotency check ─────────────────────────────────────
-            existing = ingestion_repo.find_first(external_message_id=message_id)
-            if existing:
-                logger.info(
-                    f"Duplicate webhook event — already processed: "
-                    f"message_id={message_id[:20]}... "
-                    f"existing_status={existing.status}"
-                )
-                skipped_count += 1
-                continue
+            try:
+                existing = ingestion_repo.find_first(external_message_id=message_id)
+                if existing:
+                    logger.info(
+                        f"Duplicate webhook event — already processed: "
+                        f"message_id={message_id[:20]}... "
+                        f"existing_status={existing.status}"
+                    )
+                    skipped_count += 1
+                    continue
+            except Exception as e:
+                logger.error(f"Idempotency check query failed: {e}")
+                db.rollback()
 
             # ── Retrieve media URL from Meta API ───────────────────────
             if not media_id:
                 logger.warning(f"Image message missing media_id: message_id={message_id[:20]}...")
-                # Create ingestion record with error state
-                ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id="",
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=mime_type,
-                    timestamp=timestamp,
-                    status="failed",
-                    error_message="Missing media_id in webhook payload",
-                )
+                try:
+                    ingestion_repo.create(
+                        external_user_id=sender,
+                        external_message_id=message_id,
+                        external_media_id="",
+                        channel="whatsapp",
+                        caption=caption,
+                        mime_type=mime_type,
+                        timestamp=timestamp,
+                        status="failed",
+                        error_message="Missing media_id in webhook payload",
+                    )
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Failed to record missing media_id state: {e}")
                 continue
 
-            media_url = await get_media_url(media_id)
+            try:
+                media_url = await get_media_url(media_id)
+            except Exception as e:
+                logger.error(f"Exception calling get_media_url: {e}\n{traceback.format_exc()}")
+                media_url = None
+
             if not media_url:
-                ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id=media_id,
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=mime_type,
-                    timestamp=timestamp,
-                    status="failed",
-                    error_message="Failed to retrieve media URL from Meta API",
-                )
+                logger.error(f"CRITICAL: Failed to get media URL for media_id={media_id}. Check META_WHATSAPP_TOKEN validity.")
+                try:
+                    ingestion_repo.create(
+                        external_user_id=sender,
+                        external_message_id=message_id,
+                        external_media_id=media_id,
+                        channel="whatsapp",
+                        caption=caption,
+                        mime_type=mime_type,
+                        timestamp=timestamp,
+                        status="failed",
+                        error_message="Failed to retrieve media URL from Meta API (Check Token)",
+                    )
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Failed to record media URL failure state: {e}")
                 continue
 
             # ── Download image ─────────────────────────────────────────
-            download_result = await download_media(media_url)
+            try:
+                download_result = await download_media(media_url)
+            except Exception as e:
+                logger.error(f"Exception downloading media from {media_url}: {e}\n{traceback.format_exc()}")
+                download_result = None
+
             if not download_result:
-                ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id=media_id,
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=mime_type,
-                    timestamp=timestamp,
-                    status="failed",
-                    error_message="Failed to download media from Meta",
-                )
+                logger.error(f"CRITICAL: Failed to download media binary from URL: {media_url}")
+                try:
+                    ingestion_repo.create(
+                        external_user_id=sender,
+                        external_message_id=message_id,
+                        external_media_id=media_id,
+                        channel="whatsapp",
+                        caption=caption,
+                        mime_type=mime_type,
+                        timestamp=timestamp,
+                        status="failed",
+                        error_message="Failed to download media from Meta",
+                    )
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Failed to record download failure state: {e}")
                 continue
 
             image_bytes, content_type = download_result
@@ -309,27 +283,31 @@ async def receive_webhook(
             # ── Validate image ─────────────────────────────────────────
             is_valid, error_msg = validate_image(image_bytes, content_type)
             if not is_valid:
-                ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id=media_id,
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=content_type,
-                    timestamp=timestamp,
-                    file_size=len(image_bytes),
-                    status="failed",
-                    error_message=error_msg,
-                )
                 logger.warning(
                     f"Image validation failed: {error_msg} "
                     f"sender={sender} message_id={message_id[:20]}..."
                 )
+                try:
+                    ingestion_repo.create(
+                        external_user_id=sender,
+                        external_message_id=message_id,
+                        external_media_id=media_id,
+                        channel="whatsapp",
+                        caption=caption,
+                        mime_type=content_type,
+                        timestamp=timestamp,
+                        file_size=len(image_bytes),
+                        status="failed",
+                        error_message=error_msg,
+                    )
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.error(f"Failed to record validation failure state: {e}")
                 continue
 
             # ── Store using existing UploadService ─────────────────────
             try:
-                # Determine filename from MIME type
                 ext_map = {
                     "image/jpeg": "jpg",
                     "image/png": "png",
@@ -359,6 +337,7 @@ async def receive_webhook(
                     file_size=len(image_bytes),
                     status="stored",
                 )
+                db.commit()
 
                 processed_count += 1
                 logger.info(
@@ -370,26 +349,32 @@ async def receive_webhook(
                     f"file_size={len(image_bytes)} bytes"
                 )
 
-                # ── Trigger existing GemVision generation (Part 3) ────
+                # ── Trigger existing GemVision generation ──────────────
                 background_tasks.add_task(
                     _trigger_generation,
                     ingestion.id,
                 )
 
             except Exception as e:
-                logger.error(f"Failed to store WhatsApp image: {e}")
-                ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id=media_id,
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=content_type,
-                    timestamp=timestamp,
-                    file_size=len(image_bytes),
-                    status="failed",
-                    error_message=f"Storage failure: {str(e)}",
-                )
+                db.rollback()
+                logger.error(f"Failed to store WhatsApp image: {e}\n{traceback.format_exc()}")
+                try:
+                    ingestion_repo.create(
+                        external_user_id=sender,
+                        external_message_id=message_id,
+                        external_media_id=media_id,
+                        channel="whatsapp",
+                        caption=caption,
+                        mime_type=content_type,
+                        timestamp=timestamp,
+                        file_size=len(image_bytes),
+                        status="failed",
+                        error_message=f"Storage failure: {str(e)}",
+                    )
+                    db.commit()
+                except Exception as inner_e:
+                    db.rollback()
+                    logger.error(f"Failed to log ingestion failure record: {inner_e}")
 
     logger.info(
         f"Webhook batch processed: images={image_count} "
@@ -430,11 +415,6 @@ async def webhook_health() -> Dict[str, Any]:
 @router.post(
     "/webhook/retry/{ingestion_id}",
     summary="Retry delivery for a failed ingestion",
-    description=(
-        "Manually retry generation/delivery for an ingestion that failed. "
-        "Only works for status 'failed' or 'delivery_failed'. "
-        "Generates a new image and attempts delivery again."
-    ),
 )
 async def retry_delivery(
     ingestion_id: str,
@@ -458,7 +438,6 @@ async def retry_delivery(
             "message": f"Cannot retry ingestion in status '{ingestion.status}'",
         }
 
-    # Reset status to 'stored' so process_whatsapp_generation will process it
     ingestion.status = "stored"
     ingestion.error_message = None
     db.commit()

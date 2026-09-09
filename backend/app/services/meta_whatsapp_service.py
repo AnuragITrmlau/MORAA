@@ -24,7 +24,6 @@ from app.utils.logger import logger
 
 META_MEDIA_URL_TEMPLATE = "https://graph.facebook.com/v21.0/{media_id}"
 META_SEND_MESSAGE_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/messages"
-
 META_MEDIA_UPLOAD_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/media"
 
 SUPPORTED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
@@ -34,22 +33,13 @@ SUPPORTED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
 
 def parse_webhook_entry(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Parse a single Meta webhook entry into a list of normalised change events.
-
-    Each change may be an image message, text message, status update,
-    or unsupported event. The returned list contains one dict per change
-    with standardised keys.
-
-    Returns an empty list for unsupported or unparseable changes.
-    """
+    """Parse a single Meta webhook entry into a list of normalised change events."""
     events: List[Dict[str, Any]] = []
 
     changes = entry.get("changes", [])
     for change in changes:
         value = change.get("value", {})
-        field = change.get("field", "")
 
-        # Status / confirmation events — no message content
         statuses = value.get("statuses", [])
         if statuses:
             for status in statuses:
@@ -104,13 +94,7 @@ def parse_webhook_entry(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 async def get_media_url(media_id: str) -> Optional[str]:
-    """Retrieve the temporary download URL for a Meta media ID.
-
-    Uses the authenticated Meta Graph API endpoint. The access token
-    is never exposed to callers or logged.
-
-    Returns the temporary media URL on success, or None on failure.
-    """
+    """Retrieve the temporary download URL for a Meta media ID."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error("META_WHATSAPP_TOKEN not configured — cannot retrieve media")
         return None
@@ -148,22 +132,27 @@ async def get_media_url(media_id: str) -> Optional[str]:
 
 
 async def download_media(media_url: str) -> Optional[Tuple[bytes, str]]:
-    """Download media from a Meta temporary URL.
+    """Download media from Meta CDN using Bearer auth and redirect handling."""
+    if not media_url:
+        return None
 
-    Returns a tuple of (image_bytes, content_type) on success,
-    or None on failure. The access token is NOT included in this
-    request — Meta media URLs are pre-signed and time-limited.
-    """
+    headers = {
+        "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
+        "User-Agent": "curl/7.68.0",
+    }
+
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(media_url)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            response = await client.get(media_url, headers=headers)
 
             if response.status_code != 200:
-                logger.error(f"Media download failed: status={response.status_code}")
+                logger.error(
+                    f"Media download failed: status={response.status_code} "
+                    f"body={response.text[:200]}"
+                )
                 return None
 
             content_type = response.headers.get("content-type", "application/octet-stream")
-            # Normalize content type (remove charset suffix)
             if ";" in content_type:
                 content_type = content_type.split(";")[0].strip()
 
@@ -189,16 +178,7 @@ def validate_image(
     image_bytes: bytes,
     content_type: str,
 ) -> Tuple[bool, Optional[str]]:
-    """Validate downloaded image bytes before storage.
-
-    Checks:
-    - Non-empty content
-    - Supported MIME type
-    - Reasonable file size
-    - Valid image data (Pillow verification)
-
-    Returns (is_valid, error_message).
-    """
+    """Validate downloaded image bytes before storage."""
     if len(image_bytes) == 0:
         return False, "Downloaded image is empty (0 bytes)"
 
@@ -206,18 +186,15 @@ def validate_image(
         max_mb = settings.META_MAX_MEDIA_BYTES / (1024 * 1024)
         return False, f"Image too large: {len(image_bytes)} bytes (max {max_mb:.0f} MB)"
 
-    # Normalize content type for comparison
     normalized_ct = content_type.lower().split(";")[0].strip()
     if normalized_ct not in SUPPORTED_IMAGE_MIMES:
         return False, f"Unsupported image format: {content_type} (supported: {', '.join(sorted(SUPPORTED_IMAGE_MIMES))})"
 
-    # Validate actual image data using Pillow
     try:
         from PIL import Image as PILImage
 
         img = PILImage.open(io.BytesIO(image_bytes))
         img.verify()
-        # Re-open after verify (Pillow leaves the file handle in a bad state)
         img = PILImage.open(io.BytesIO(image_bytes))
         w, h = img.size
         if w < 16 or h < 16:
@@ -235,14 +212,7 @@ def verify_webhook_signature(
     payload_body: bytes,
     signature_header: Optional[str],
 ) -> bool:
-    """Verify Meta's X-Hub-Signature-256 HMAC-SHA256 signature.
-
-    If META_APP_SECRET is not configured, signature verification
-    is skipped (returns True) to allow development/testing without
-    Meta credentials.
-
-    Returns True if signature is valid or verification is disabled.
-    """
+    """Verify Meta's X-Hub-Signature-256 HMAC-SHA256 signature."""
     if not settings.META_APP_SECRET:
         logger.info("META_APP_SECRET not configured — skipping webhook signature verification")
         return True
@@ -277,25 +247,7 @@ def verify_webhook_signature(
 
 
 async def process_whatsapp_generation(ingestion_id: str) -> bool:
-    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion.
-
-    This is the core Part 3 function. It:
-    1. Loads the WhatsAppIngestion record
-    2. Guards against duplicate processing (idempotency)
-    3. Loads the associated Image record to get the stored file path
-    4. Builds Prompt 1 via the existing build_earring_ecommerce_prompt()
-    5. Reads the stored image file as bytes
-    6. Calls the existing ImageGenerationManager.generate_image()
-    7. Uploads the generated image to Meta media API
-    8. Sends the image back to the original WhatsApp user
-    9. Updates the ingestion status at each stage
-
-    Args:
-        ingestion_id: The WhatsAppIngestion.id to process.
-
-    Returns:
-        True if generation and delivery succeeded, False otherwise.
-    """
+    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion."""
     from app.database import SessionLocal
     from app.models.image import Image
     from app.models.whatsapp_ingestion import WhatsAppIngestion
@@ -312,7 +264,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             logger.error(f"WhatsApp generation: ingestion not found: {ingestion_id}")
             return False
 
-        # ── Idempotency: prevent duplicate processing ──────────────────
         if ingestion.status not in ("stored", "failed"):
             logger.info(
                 f"WhatsApp generation: skipping ingestion {ingestion_id} "
@@ -320,7 +271,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             )
             return False
 
-        # ── Update status to processing ────────────────────────────────
         ingestion.status = "processing"
         ingestion.error_message = None
         db.commit()
@@ -330,7 +280,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"request_id={ingestion.request_id} user={ingestion.external_user_id}"
         )
 
-        # ── Load the stored image ─────────────────────────────────────
         image_record = db.query(Image).filter(
             Image.id == ingestion.image_id
         ).first()
@@ -339,8 +288,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             _fail_ingestion(db, ingestion, "Image record not found")
             return False
 
-        # ── Read stored image bytes ────────────────────────────────────
-        import base64
         from pathlib import Path
 
         image_path = Path(image_record.file_path)
@@ -358,7 +305,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"{len(reference_image_bytes)} bytes from {image_path}"
         )
 
-        # ── Build Prompt 1 (existing e-commerce prompt) ────────────────
         prompt = build_earring_ecommerce_prompt()
 
         logger.info(
@@ -366,7 +312,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
         )
 
-        # ── Call existing ImageGenerationManager ───────────────────────
         manager = ImageGenerationManager()
         result = await manager.generate_image(
             prompt=prompt,
@@ -385,21 +330,17 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
         logger.info(
             f"WhatsApp generation: succeeded "
             f"provider={result.provider_name} "
-            f"time={result.processing_time:.2f}s "f"request_id={ingestion.request_id}"
+            f"time={result.processing_time:.2f}s request_id={ingestion.request_id}"
         )
 
-        # ── Update status to generated ─────────────────────────────────
         ingestion.status = "generated"
         db.commit()
 
-        # ── Upload to Meta media API ──────────────────────────────────
-        # Extract raw image bytes from the base64 data URL
         image_data_url = result.image_url
         if not image_data_url:
             _fail_ingestion(db, ingestion, "Generation succeeded but no image data returned")
             return False
 
-        # Parse data:image/png;base64,... → raw bytes
         generated_image_bytes = _data_url_to_bytes(image_data_url)
         if not generated_image_bytes:
             _fail_ingestion(db, ingestion, "Failed to decode generated image data")
@@ -415,7 +356,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             f"media_id={media_id[:20]}... request_id={ingestion.request_id}"
         )
 
-        # ── Send to WhatsApp user ──────────────────────────────────────
         send_ok = await send_image_to_whatsapp(
             recipient_id=ingestion.external_user_id,
             media_id=media_id,
@@ -425,7 +365,6 @@ async def process_whatsapp_generation(ingestion_id: str) -> bool:
             _fail_delivery(db, ingestion, "Meta message send failed")
             return False
 
-        # ── Mark as delivered ──────────────────────────────────────────
         ingestion.status = "delivered"
         ingestion.error_message = None
         db.commit()
@@ -463,11 +402,7 @@ def _fail_ingestion(db, ingestion, error_message: str) -> None:
 
 
 def _fail_delivery(db, ingestion, error_message: str) -> None:
-    """Mark delivery failure separately from generation failure.
-
-    The image was generated successfully but delivery to Meta/WhatsApp failed.
-    The ingestion status is set to 'delivery_failed' so it can be retried.
-    """
+    """Mark delivery failure separately from generation failure."""
     ingestion.status = "delivery_failed"
     ingestion.error_message = error_message
     db.commit()
@@ -478,17 +413,13 @@ def _fail_delivery(db, ingestion, error_message: str) -> None:
 
 
 def _data_url_to_bytes(data_url: str) -> Optional[bytes]:
-    """Convert a data:image/...;base64,... URL to raw bytes.
-
-    Returns None if the format is invalid.
-    """
+    """Convert a data:image/...;base64,... URL to raw bytes."""
     import base64
 
     try:
         if not data_url.startswith("data:"):
             return None
 
-        # Split: data:image/png;base64,<payload>
         header, payload = data_url.split(",", 1)
         return base64.b64decode(payload)
     except Exception:
@@ -502,11 +433,7 @@ async def upload_media_to_meta(
     image_bytes: bytes,
     mime_type: str = "image/png",
 ) -> Optional[str]:
-    """Upload an image to Meta's WhatsApp media API.
-
-    Returns the Meta media ID on success, or None on failure.
-    The access token remains server-side and is never logged.
-    """
+    """Upload an image to Meta's WhatsApp media API."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error("META_WHATSAPP_TOKEN not configured — cannot upload media")
         return None
@@ -521,7 +448,6 @@ async def upload_media_to_meta(
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Determine file extension from MIME type
             ext_map = {
                 "image/png": ".png",
                 "image/jpeg": ".jpg",
@@ -565,15 +491,7 @@ async def send_image_to_whatsapp(
     recipient_id: str,
     media_id: str,
 ) -> bool:
-    """Send an image message to a WhatsApp user via Meta Send API.
-
-    Args:
-        recipient_id: WhatsApp phone number of the recipient.
-        media_id: Meta media ID of the uploaded image.
-
-    Returns:
-        True if the message was sent successfully, False otherwise.
-    """
+    """Send an image message to a WhatsApp user via Meta Send API."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error("META_WHATSAPP_TOKEN not configured — cannot send message")
         return False
