@@ -185,6 +185,26 @@ CELERY_TASK_ALWAYS_EAGER=true
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
 
+# ─── WhatsApp Onboarding (new customer registration flow) ──
+# false (DEFAULT) = the existing WhatsApp image pipeline is unchanged
+# true            = unregistered users are onboarded before using the service
+ENABLE_ONBOARDING_GATE=False
+# Gemini text model used ONLY to extract registration fields (strict JSON)
+ONBOARDING_PARSER_MODEL=gemini-1.5-flash
+
+# ─── Wallet / paid generation (Scenarios 2, 3, 4) ──────────
+# false (DEFAULT) = every image is processed exactly as before
+# true            = wallet gate, batch funding and AI pre-validation
+ENABLE_WALLET_GATE=False
+WALLET_IMAGE_PRICE_RUPEES=500
+# PSP-hosted payment page opened by the "Pay ₹500" CTA URL button.
+# Leave empty to fall back to the 'recharge_500' reply button.
+RECHARGE_PAYMENT_URL=
+IMAGE_PREVALIDATION_ENABLED=true
+IMAGE_PREVALIDATION_MODEL=gemini-2.5-flash
+# true = never block a paying customer when the checker is unavailable
+IMAGE_PREVALIDATION_FAIL_OPEN=true
+
 # ─── Logging ───────────────────────────────────────────────
 LOG_LEVEL=DEBUG
 ```
@@ -201,6 +221,12 @@ LOG_LEVEL=DEBUG
 | `AI_ENGINE_TYPE` | Which AI analysis engine to use: `mock` (random) or `vision` (real). |
 | `GEMINI_API_KEY` | Google Gemini API key (only needed if using Gemini-based analysis). |
 | `CELERY_TASK_ALWAYS_EAGER` | When `true`, tasks run synchronously — no Redis required. Set to `false` in production. |
+| `ENABLE_ONBOARDING_GATE` | When `true`, new WhatsApp users are onboarded (welcome → registration → recharge CTA) before using the service. `false` (default) leaves the existing WhatsApp pipeline exactly as it is. |
+| `ONBOARDING_PARSER_MODEL` | Gemini text model used only to extract registration fields from free-form WhatsApp messages (strict JSON). |
+| `ENABLE_WALLET_GATE` | When `true`, images are gated on the customer's wallet balance (Scenarios 2/3) and funded images are AI pre-validated (Scenario 4). `false` (default) leaves the image pipeline exactly as it is. |
+| `WALLET_IMAGE_PRICE_RUPEES` | Price charged per generated image, in whole Rupees. |
+| `RECHARGE_PAYMENT_URL` | PSP-hosted payment page (e.g. a Razorpay link) used by the CTA URL button. Empty = fall back to the `recharge_500` reply button. |
+| `IMAGE_PREVALIDATION_FAIL_OPEN` | When `true` (default), an unavailable quality checker lets the image through instead of blocking a paying customer. |
 
 ### 4.5 Run Database Migrations
 
@@ -208,7 +234,12 @@ LOG_LEVEL=DEBUG
 alembic upgrade head
 ```
 
-This creates the SQLite database file at `backend/data/moraa_gemvision.db` with all required tables.
+This creates the SQLite database file at `backend/data/moraa_gemvision.db` with all required tables,
+including the additive onboarding tables (`customers`, `onboarding_sessions`) and the customer wallet
+columns (`wallet_balance`, `is_registered`). The migrations only ever CREATE the two tables or ADD
+the two columns — no existing table or column is renamed or dropped, existing customer rows are
+back-filled by the database defaults (`wallet_balance=0`, `is_registered=true`) — and they are safe
+to re-run on an existing database.
 
 **Expected output:**
 ```
@@ -579,8 +610,11 @@ python --version
 
 ```bash
 # Start the API server (with auto-reload)
-cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+
+#To run the terminaal 
+npx ngrok http 8000 --url=drainpipe-unsoiled-native.ngrok-free.dev
 
 # Run database migrations
 cd backend

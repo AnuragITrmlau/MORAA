@@ -373,6 +373,207 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
         return False
 
 
+# ─── Plain text + CTA button messages (onboarding) ────────────────────────
+
+
+async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
+    """POST a message payload to the Meta Send API with standard guards.
+
+    Shared by the additive onboarding helpers only. The pre-existing
+    ``send_prompt_selection_buttons`` and ``send_image_to_whatsapp``
+    functions are intentionally left untouched.
+    """
+    if not settings.META_WHATSAPP_TOKEN:
+        logger.error(f"META_WHATSAPP_TOKEN not configured — cannot send {label}")
+        return False
+
+    if not settings.META_PHONE_NUMBER_ID:
+        logger.error(f"META_PHONE_NUMBER_ID not configured — cannot send {label}")
+        return False
+
+    url = META_SEND_MESSAGE_URL.format(
+        phone_number_id=settings.META_PHONE_NUMBER_ID
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Meta send {label} failed: status={response.status_code}"
+                )
+                return False
+
+            data = response.json()
+            messages = data.get("messages", [])
+            if not messages:
+                logger.error(f"Meta send {label} response missing 'messages': {data}")
+                return False
+
+            logger.info(
+                f"Meta {label} sent: recipient={payload.get('to', '')} "
+                f"message_id={messages[0].get('id', '')}"
+            )
+            return True
+
+    except httpx.TimeoutException:
+        logger.error(f"Meta send {label} timed out")
+        return False
+    except Exception as e:
+        logger.error(f"Meta send {label} failed: {e}")
+        return False
+
+
+async def send_whatsapp_text(recipient_id: str, message_text: str) -> bool:
+    """Send a plain text WhatsApp message (Meta Graph API v21.0 payload).
+
+    Canonical named entry point for the customer journey (Scenarios 1-3).
+    ``send_text_message`` remains as a thin alias for existing callers.
+    """
+    return await send_text_message(recipient_id, message_text)
+
+
+async def send_whatsapp_cta_url_button(
+    recipient_id: str,
+    body_text: str,
+    button_label: str,
+    url: str,
+) -> bool:
+    """Send an interactive CTA-URL button (e.g. a Razorpay recharge link).
+
+    Meta payload shape (Graph API v21.0)::
+
+        {
+          "messaging_product": "whatsapp",
+          "to": "<id>",
+          "type": "interactive",
+          "interactive": {
+            "type": "cta_url",
+            "body": {"text": "<body>"},
+            "action": {
+              "name": "cta_url",
+              "parameters": {"display_text": "Pay ₹500", "url": "https://…"}
+            }
+          }
+        }
+
+    Meta requires ``display_text`` to be at most 20 characters and the URL to
+    be a valid absolute http(s) link, so both are validated here. Nothing is
+    sent when the URL is missing or malformed — the caller can then fall back
+    to a reply button.
+    """
+    if not recipient_id or not body_text:
+        logger.warning(
+            "send_whatsapp_cta_url_button called without recipient/body — skipped"
+        )
+        return False
+
+    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+        logger.error(
+            "send_whatsapp_cta_url_button: payment URL is missing or not an "
+            "absolute http(s) link — CTA not sent"
+        )
+        return False
+
+    # Meta limit: display_text is max 20 characters.
+    display_text = (button_label or "").strip()
+    if not display_text:
+        logger.error("send_whatsapp_cta_url_button: empty button label — CTA not sent")
+        return False
+    if len(display_text) > 20:
+        logger.warning(
+            f"send_whatsapp_cta_url_button: label truncated to Meta's 20-char limit "
+            f"(was {len(display_text)})"
+        )
+        display_text = display_text[:20].rstrip()
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient_id,
+        "type": "interactive",
+        "interactive": {
+            "type": "cta_url",
+            "body": {"text": body_text},
+            "action": {
+                "name": "cta_url",
+                "parameters": {
+                    "display_text": display_text,
+                    "url": url,
+                },
+            },
+        },
+    }
+
+    return await _post_message_payload(payload, "interactive CTA URL button")
+
+
+async def send_text_message(recipient_id: str, text: str) -> bool:
+    """Send a plain text message to a WhatsApp user via the Meta Send API."""
+    if not recipient_id or not text:
+        logger.warning("send_text_message called without recipient or text — skipped")
+        return False
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "text",
+        "text": {"preview_url": False, "body": text},
+    }
+
+    return await _post_message_payload(payload, "text message")
+
+
+async def send_interactive_cta_button(
+    recipient_id: str,
+    body_text: str,
+    button_id: str,
+    button_title: str,
+) -> bool:
+    """Send an interactive single-button (CTA) message.
+
+    Follows the Meta WhatsApp Cloud API interactive button structure and is
+    used by the onboarding flow for the recharge placeholder button. The
+    button is a UI affordance only — no payment/wallet logic exists.
+    """
+    if not recipient_id or not button_id or not button_title:
+        logger.warning(
+            "send_interactive_cta_button called without recipient/button — skipped"
+        )
+        return False
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": button_id,
+                            "title": button_title,
+                        },
+                    }
+                ],
+            },
+        },
+    }
+
+    return await _post_message_payload(payload, "interactive CTA button")
+
+
 # ─── Generation trigger ──────────────────────────────────────────────────
 
 

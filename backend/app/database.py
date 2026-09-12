@@ -58,8 +58,10 @@ def init_db() -> None:
     from app.models import (  # noqa: F401 - Import models to register them
         Analysis,
         AuditLog,
+        Customer,
         HistoryEntry,
         Image,
+        OnboardingSession,
         ProcessingLog,
         Report,
         RetryHistory,

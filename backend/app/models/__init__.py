@@ -15,6 +15,8 @@ from app.models.tool_execution import ToolExecutionLog
 from app.models.retry_history import RetryHistory
 from app.models.version_history import VersionHistory
 from app.models.whatsapp_ingestion import WhatsAppIngestion
+from app.models.customer import Customer
+from app.models.onboarding_session import OnboardingSession
 
 __all__ = [
     "User",
@@ -28,4 +30,6 @@ __all__ = [
     "RetryHistory",
     "VersionHistory",
     "WhatsAppIngestion",
+    "Customer",
+    "OnboardingSession",
 ]

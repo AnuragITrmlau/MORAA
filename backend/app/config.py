@@ -140,6 +140,49 @@ class Settings(BaseSettings):
     # Maximum WhatsApp image download size (bytes) — 5 MB safety limit
     META_MAX_MEDIA_BYTES: int = 5 * 1024 * 1024
 
+    # --- WhatsApp Onboarding Gate (new customer onboarding) ---
+    # When False (DEFAULT) the WhatsApp pipeline behaves EXACTLY as before:
+    # inbound text messages are logged and ignored, and the image →
+    # style-selection → generation flow is untouched.
+    # When True, text messages from unregistered WhatsApp users are routed
+    # through app/services/onboarding_service.py (welcome → registration →
+    # recharge CTA). Registered users always bypass onboarding.
+    ENABLE_ONBOARDING_GATE: bool = False
+
+    # Gemini text model used ONLY to extract structured registration fields
+    # from free-form WhatsApp registration messages. This parser never
+    # generates conversational replies — it returns strict JSON only.
+    ONBOARDING_PARSER_MODEL: str = "gemini-1.5-flash"
+
+    # --- Wallet gate (Scenarios 2, 3 and 4) ---
+    # When False (DEFAULT) the image pipeline behaves EXACTLY as before:
+    # every inbound image is stored and style-selection buttons are sent,
+    # with no wallet checks, no batching limits and no AI pre-validation.
+    # When True the paid journey is active: registered customers are gated on
+    # their wallet balance, extra images are held as 'pending_payment' and
+    # funded images are quality-checked before any credits are spent.
+    ENABLE_WALLET_GATE: bool = False
+
+    # Price charged per generated image, in whole Indian Rupees.
+    WALLET_IMAGE_PRICE_RUPEES: int = 500
+
+    # Razorpay (or any PSP) payment-page URL used by the "Pay ₹<price>" CTA
+    # URL button. Leave empty to fall back to the interactive reply button
+    # ('recharge_500' / "💳 Recharge to use") that the onboarding flow already
+    # uses. No payment gateway SDK or credential is required by this code —
+    # the button only opens the PSP-hosted page.
+    RECHARGE_PAYMENT_URL: str = ""
+
+    # --- AI image pre-validation (Scenario 4) ---
+    # Fast Gemini quality inspection of a funded image before generation.
+    # Only consulted when ENABLE_WALLET_GATE=True.
+    IMAGE_PREVALIDATION_ENABLED: bool = True
+    IMAGE_PREVALIDATION_MODEL: str = "gemini-2.5-flash"
+    # When the inspector cannot run (no API key, outage, unparseable reply):
+    # True  -> allow the image through (never block a paying customer)
+    # False -> reject the image and ask the customer to resend
+    IMAGE_PREVALIDATION_FAIL_OPEN: bool = True
+
     # --- Image Preprocessing ---
     # Max dimension (pixels) for image resizing before AI analysis
     PREPROCESS_MAX_DIMENSION: int = 2048

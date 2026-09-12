@@ -295,6 +295,23 @@ def build_earring_ecommerce_prompt(
     """
     parts: list[str] = []
 
+    # ── 1:1 Visual Preservation Lock (NON-NEGOTIABLE — highest priority) ─
+    parts.append(
+        "CRITICAL: The earrings in the output MUST be an exact 1:1 physical "
+        "replica of the earrings provided in the reference image. Retain "
+        "exact stone count, stone shapes (e.g., baguette, marquise, pear, "
+        "round), prong setting structure, metal tone, and earring "
+        "silhouette. DO NOT alter the core jewelry design or invent "
+        "alternate motifs."
+    )
+
+    # ── Input Extraction (remove packaging / distractions) ────────────
+    parts.append(
+        "Remove all retail packaging, polybags, display cards, plastic "
+        "film, and human fingers. Extract the jewelry piece with pristine "
+        "studio fidelity."
+    )
+
     # ── Header ──────────────────────────────────────────────────
     parts.append(
         "TASK: Generate a single e-commerce main image for a Fashion "

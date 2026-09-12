@@ -42,6 +42,19 @@ def build_close_up_ears_prompt() -> str:
         On-ear close-up with exact jewellery preserved
     """
     parts = [
+        # ── 1:1 VISUAL PRESERVATION LOCK (NON-NEGOTIABLE) ──────────────
+        "CRITICAL: The earrings in the output MUST be an exact 1:1 physical "
+        "replica of the earrings provided in the reference image. Retain "
+        "exact stone count, stone shapes (e.g., baguette, marquise, pear, "
+        "round), prong setting structure, metal tone, and earring "
+        "silhouette. DO NOT alter the core jewelry design or invent "
+        "alternate motifs.",
+
+        # ── INPUT EXTRACTION (remove packaging / distractions) ────────
+        "Remove all retail packaging, polybags, display cards, plastic "
+        "film, and human fingers. Extract the jewelry piece with pristine "
+        "studio fidelity.",
+
         # ── TASK ──────────────────────────────────────────────────────
         "TASK: Close Up Ears.\n"
         "Generate ONE realistic, premium e-commerce photograph showing the "
