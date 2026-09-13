@@ -2,12 +2,14 @@
 
 Implements the official WhatsApp webhook verification and event reception
 endpoints. Ingests incoming WhatsApp images, validates via AI Quality Guard,
-enforces Scenario 2 zero-balance wallet gating, and forwards to AI generation.
+enforces Scenario 2 zero-balance wallet gating, handles custom recharges (>= ₹500),
+and forwards to AI generation.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import json
+import re
 import traceback
 import httpx
 
@@ -198,7 +200,7 @@ async def receive_webhook(
             if event_type == "status":
                 continue
 
-            # ── Text messages (Scenario 1: Welcome & Registration) ──
+            # ── Text messages (Scenario 1: Welcome & Registration + Custom Recharge) ──
             if event_type == "text":
                 sender = event.get("sender", "")
                 raw_text = event.get("body", "").strip()
@@ -277,6 +279,52 @@ async def receive_webhook(
                     onboarding_handled_count += 1
                     continue
 
+                # Check 3: Custom Recharge Command (e.g., 'recharge 1000', 'pay 500', 'add 1500')
+                recharge_match = re.search(r"\b(?:recharge|pay|add)\s*(?:rs\.?|inr|₹)?\s*(\d+)\b", lower_text)
+                if recharge_match:
+                    requested_amount = int(recharge_match.group(1))
+
+                    if requested_amount < 500:
+                        error_msg = (
+                            "Minimum recharge amount is ₹500 ⚠️\n"
+                            "Please enter an amount of ₹500 or more (e.g. 'recharge 500', 'recharge 1000')."
+                        )
+                        await send_whatsapp_text(sender, error_msg)
+                        continue
+
+                    customer = get_customer(db, sender) or get_customer(db, sender.lstrip("+"))
+                    customer_name = customer.name if customer and customer.name else "Valued Customer"
+
+                    try:
+                        pay_url = await create_recharge_payment_link(
+                            customer_phone=sender,
+                            customer_name=customer_name,
+                            amount=requested_amount,
+                        )
+                    except Exception as e:
+                        logger.error(f"Custom recharge link generation failed for {sender}: {e}")
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    if not pay_url:
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    cta_body = f"Here is your recharge link for ₹{requested_amount} 💳\nTap below to complete the payment."
+                    btn_text = f"Pay ₹{requested_amount}"
+                    if len(btn_text) > 20:
+                        btn_text = "Pay Now"
+
+                    sent_btn = await send_whatsapp_cta_url_button(
+                        recipient_id=sender,
+                        body_text=cta_body,
+                        button_label=btn_text,
+                        url=pay_url,
+                    )
+
+                    if not sent_btn:
+                        await send_whatsapp_text(sender, f"{cta_body}\n\nLink: {pay_url}")
+
+                    continue
+
                 continue
 
             # ── Interactive button replies (Style Selection & Feedback) ──
@@ -351,8 +399,7 @@ async def receive_webhook(
                         "Your current balance is ₹0 ⚠️\n"
                         "Please make a payment to continue."
                     )
-                    
-                    # Exact CTA Button from Journey UI
+
                     sent_gate = await send_whatsapp_cta_url_button(
                         recipient_id=sender,
                         body_text=zero_balance_msg,
