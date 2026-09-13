@@ -11,6 +11,7 @@ Responsibilities:
     - Send generated images back to WhatsApp users
 """
 
+import asyncio
 import hashlib
 import io
 from typing import Any, Dict, List, Optional, Tuple
@@ -373,16 +374,74 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
         return False
 
 
+async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
+    """Send post-generation interactive feedback buttons.
+
+    Buttons:
+        Button 1: "😍 Yes, this is good" (ID: "feedback_positive:<ingestion_id>")
+        Button 2: "🤕 I didn't like it"   (ID: "feedback_negative:<ingestion_id>")
+    """
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials not configured — cannot send feedback buttons")
+        return False
+
+    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {
+                "text": "How did we do? We’d love your feedback 🌟"
+            },
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": f"feedback_positive:{ingestion_id}",
+                            "title": "😍 Yes, this is good",
+                        },
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": f"feedback_negative:{ingestion_id}",
+                            "title": "🤕 I didn't like it",
+                        },
+                    },
+                ],
+            },
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if resp.status_code == 200:
+                logger.info(f"Feedback buttons sent to {recipient_id} for ingestion_id={ingestion_id}")
+                return True
+            else:
+                logger.error(f"Failed to send feedback buttons: status={resp.status_code} body={resp.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Network error sending feedback buttons: {e}")
+        return False
+
+
 # ─── Plain text + CTA button messages (onboarding) ────────────────────────
 
 
 async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
-    """POST a message payload to the Meta Send API with standard guards.
-
-    Shared by the additive onboarding helpers only. The pre-existing
-    ``send_prompt_selection_buttons`` and ``send_image_to_whatsapp``
-    functions are intentionally left untouched.
-    """
+    """POST a message payload to the Meta Send API with standard guards."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error(f"META_WHATSAPP_TOKEN not configured — cannot send {label}")
         return False
@@ -433,11 +492,7 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
 
 
 async def send_whatsapp_text(recipient_id: str, message_text: str) -> bool:
-    """Send a plain text WhatsApp message (Meta Graph API v21.0 payload).
-
-    Canonical named entry point for the customer journey (Scenarios 1-3).
-    ``send_text_message`` remains as a thin alias for existing callers.
-    """
+    """Send a plain text WhatsApp message (Meta Graph API v21.0 payload)."""
     return await send_text_message(recipient_id, message_text)
 
 
@@ -447,29 +502,7 @@ async def send_whatsapp_cta_url_button(
     button_label: str,
     url: str,
 ) -> bool:
-    """Send an interactive CTA-URL button (e.g. a Razorpay recharge link).
-
-    Meta payload shape (Graph API v21.0)::
-
-        {
-          "messaging_product": "whatsapp",
-          "to": "<id>",
-          "type": "interactive",
-          "interactive": {
-            "type": "cta_url",
-            "body": {"text": "<body>"},
-            "action": {
-              "name": "cta_url",
-              "parameters": {"display_text": "Pay ₹500", "url": "https://…"}
-            }
-          }
-        }
-
-    Meta requires ``display_text`` to be at most 20 characters and the URL to
-    be a valid absolute http(s) link, so both are validated here. Nothing is
-    sent when the URL is missing or malformed — the caller can then fall back
-    to a reply button.
-    """
+    """Send an interactive CTA-URL button."""
     if not recipient_id or not body_text:
         logger.warning(
             "send_whatsapp_cta_url_button called without recipient/body — skipped"
@@ -483,7 +516,6 @@ async def send_whatsapp_cta_url_button(
         )
         return False
 
-    # Meta limit: display_text is max 20 characters.
     display_text = (button_label or "").strip()
     if not display_text:
         logger.error("send_whatsapp_cta_url_button: empty button label — CTA not sent")
@@ -538,12 +570,7 @@ async def send_interactive_cta_button(
     button_id: str,
     button_title: str,
 ) -> bool:
-    """Send an interactive single-button (CTA) message.
-
-    Follows the Meta WhatsApp Cloud API interactive button structure and is
-    used by the onboarding flow for the recharge placeholder button. The
-    button is a UI affordance only — no payment/wallet logic exists.
-    """
+    """Send an interactive single-button (CTA) message."""
     if not recipient_id or not button_id or not button_title:
         logger.warning(
             "send_interactive_cta_button called without recipient/button — skipped"
@@ -581,13 +608,7 @@ async def process_whatsapp_generation(
     ingestion_id: str,
     prompt_type: str = "prompt_ecommerce",
 ) -> bool:
-    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion.
-
-    Args:
-        ingestion_id: The WhatsAppIngestion record ID.
-        prompt_type: One of "prompt_ecommerce", "prompt_close_up", or "prompt_ugc".
-            Defaults to "prompt_ecommerce" for backward compatibility.
-    """
+    """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion."""
     from app.database import SessionLocal
     from app.models.image import Image
     from app.models.whatsapp_ingestion import WhatsAppIngestion
@@ -606,9 +627,6 @@ async def process_whatsapp_generation(
             logger.error(f"WhatsApp generation: ingestion not found: {ingestion_id}")
             return False
 
-        # Only block in-flight runs: terminal/awaiting states (stored, failed,
-        # awaiting_selection, generated, delivered, delivery_failed) may all
-        # re-run so the user can pick a different style for the same image.
         if ingestion.status == "processing":
             logger.info(
                 f"WhatsApp generation: skipping ingestion {ingestion_id} "
@@ -651,29 +669,16 @@ async def process_whatsapp_generation(
             f"{len(reference_image_bytes)} bytes from {image_path}"
         )
 
-        # ── Route to the correct prompt builder based on prompt_type ───
+        # ── Route to prompt builder ──
         if prompt_type == "prompt_ecommerce":
             prompt = build_earring_ecommerce_prompt()
-            logger.info(
-                f"WhatsApp generation: built Prompt 1 (E-Commerce) "
-                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
-            )
         elif prompt_type == "prompt_close_up":
             prompt = build_close_up_ears_prompt()
-            logger.info(
-                f"WhatsApp generation: built Prompt 2 (Close-up on Ear) "
-                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
-            )
         elif prompt_type == "prompt_ugc":
             prompt = build_ugc_style_prompt()
-            logger.info(
-                f"WhatsApp generation: built Prompt 6 (UGC Lifestyle) "
-                f"prompt_len={len(prompt)} request_id={ingestion.request_id}"
-            )
         else:
             logger.warning(
-                f"Unknown prompt_type '{prompt_type}' — falling back to prompt_ecommerce "
-                f"ingestion_id={ingestion_id}"
+                f"Unknown prompt_type '{prompt_type}' — falling back to prompt_ecommerce"
             )
             prompt = build_earring_ecommerce_prompt()
 
@@ -721,13 +726,8 @@ async def process_whatsapp_generation(
             f"media_id={media_id[:20]}... request_id={ingestion.request_id}"
         )
 
-        # Caption reflects the style selected via the button reply
-        caption_map = {
-            "prompt_ecommerce": "Your e-commerce image is ready.",
-            "prompt_close_up": "Your Close-up on Ear image is ready.",
-            "prompt_ugc": "Your UGC Lifestyle image is ready.",
-        }
-        send_caption = caption_map.get(prompt_type, "Your e-commerce image is ready.")
+        # Exact target caption with balance notice
+        send_caption = "Here’s your E-commerce Pack 1 📦✨\nRemaining balance: ₹0"
 
         send_ok = await send_image_to_whatsapp(
             recipient_id=ingestion.external_user_id,
@@ -747,6 +747,17 @@ async def process_whatsapp_generation(
             f"WhatsApp generation: delivered successfully "
             f"ingestion_id={ingestion_id} user={ingestion.external_user_id}"
         )
+
+        # ── Trigger Post-Generation Feedback Buttons ──
+        try:
+            await asyncio.sleep(1.5)
+            await send_feedback_buttons(
+                recipient_id=ingestion.external_user_id,
+                ingestion_id=ingestion_id,
+            )
+        except Exception as fb_err:
+            logger.error(f"Failed to dispatch post-generation feedback buttons: {fb_err}")
+
         return True
 
     except Exception as e:

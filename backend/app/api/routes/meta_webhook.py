@@ -35,7 +35,6 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
-# Default recharge payment link (Update with your live Razorpay / payment link)
 DEFAULT_PAYMENT_URL = "https://rzp.io/l/moraa-recharge"
 
 
@@ -90,7 +89,6 @@ def _handle_button_reply(
         return None
 
     if prompt_type not in ("prompt_ecommerce", "prompt_close_up", "prompt_ugc"):
-        logger.warning(f"Unknown prompt type in button_reply: type={prompt_type}")
         return None
 
     logger.info(
@@ -192,11 +190,11 @@ async def receive_webhook(
         for event in events:
             event_type = event.get("type", "")
 
-            # ── Status events ──────────────────────────────────────────
+            # ── Status events ──
             if event_type == "status":
                 continue
 
-            # ── Text messages (Scenario 1: Welcome & Registration) ────
+            # ── Text messages (Scenario 1: Welcome & Registration) ──
             if event_type == "text":
                 sender = event.get("sender", "")
                 raw_text = event.get("body", "").strip()
@@ -242,10 +240,6 @@ async def receive_webhook(
                         f"You’re all set to start creating stunning product photos."
                     )
 
-                    # Generate a dynamic Razorpay recharge link for this
-                    # customer. The service itself falls back to a static
-                    # link, but we guard against an unexpected raise as well
-                    # so the confirmation flow can never be interrupted.
                     try:
                         pay_url = await create_recharge_payment_link(
                             customer_phone=sender,
@@ -261,7 +255,6 @@ async def receive_webhook(
                     if not pay_url:
                         pay_url = DEFAULT_PAYMENT_URL
 
-                    # Send CTA URL button for recharging (Scenario 1)
                     cta_sent = await send_whatsapp_cta_url_button(
                         recipient_id=sender,
                         body_text=confirm_msg,
@@ -269,7 +262,6 @@ async def receive_webhook(
                         url=pay_url,
                     )
 
-                    # Fallback to plain text if CTA fails
                     if not cta_sent:
                         fallback_msg = (
                             f"{confirm_msg}\n\n"
@@ -283,9 +275,24 @@ async def receive_webhook(
 
                 continue
 
-            # ── Interactive button replies ─────────────────────────────
+            # ── Interactive button replies (Style Selection & Feedback) ──
             if event_type == "interactive" and event.get("subtype") == "button_reply":
                 button_reply_count += 1
+                button_reply = event.get("button_reply", {})
+                b_id = button_reply.get("id", "")
+                sender = event.get("sender", "")
+
+                # Handle Feedback reply
+                if b_id.startswith("feedback_"):
+                    if b_id.startswith("feedback_positive"):
+                        fb_response = "Thank you so much for the love! Glad you liked it 🎉 Send your next photo anytime!"
+                    else:
+                        fb_response = "Thanks for letting us know! We’re constantly training our model. You can retry with another angle or lighting 📸"
+                    
+                    await send_whatsapp_text(recipient_id=sender, message_text=fb_response)
+                    continue
+
+                # Handle Generation Style selection
                 button_selection = _handle_button_reply(event, db)
                 if button_selection:
                     prompt_type, ingestion_id = button_selection
@@ -299,11 +306,11 @@ async def receive_webhook(
                     )
                 continue
 
-            # ── Unsupported events ─────────────────────────────────────
+            # ── Unsupported events ──
             if event_type in ("interactive", "unsupported"):
                 continue
 
-            # ── Image messages ─────────────────────────────────────────
+            # ── Image messages ──
             if event_type != "image":
                 continue
 
@@ -315,8 +322,6 @@ async def receive_webhook(
             caption = event.get("caption", "")
             timestamp = event.get("timestamp", "")
 
-            # ── Scenario 2: Zero Balance Wallet Gate (Configurable) ───
-            # Set ENABLE_WALLET_GATE=True in .env to enforce payment before generation
             wallet_gate_active = getattr(settings, "ENABLE_WALLET_GATE", False)
             if wallet_gate_active:
                 zero_balance_msg = (
