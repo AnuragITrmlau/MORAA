@@ -20,6 +20,7 @@ from app.api.routes import earring_complementary_shot
 from app.api.routes import earring_ugc_style
 from app.api.routes import earring_macro_shot
 from app.api.routes import meta_webhook
+from app.api.routes import payment_routes
 from app.api.routes.health import router as health_router
 
 # Import Celery task modules so they register with the Celery app
@@ -125,6 +126,7 @@ app.include_router(earring_complementary_shot.router)
 app.include_router(earring_ugc_style.router)
 app.include_router(earring_macro_shot.router)
 app.include_router(meta_webhook.router)
+app.include_router(payment_routes.router)
 
 # Serve uploaded files statically
 uploads_path = settings.UPLOAD_PATH

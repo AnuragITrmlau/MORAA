@@ -29,6 +29,7 @@ from app.services.meta_whatsapp_service import (
     validate_image,
     verify_webhook_signature,
 )
+from app.services.razorpay_service import create_recharge_payment_link
 from app.services.upload_service import UploadService
 from app.utils.logger import logger
 
@@ -241,12 +242,31 @@ async def receive_webhook(
                         f"You’re all set to start creating stunning product photos."
                     )
 
+                    # Generate a dynamic Razorpay recharge link for this
+                    # customer. The service itself falls back to a static
+                    # link, but we guard against an unexpected raise as well
+                    # so the confirmation flow can never be interrupted.
+                    try:
+                        pay_url = await create_recharge_payment_link(
+                            customer_phone=sender,
+                            customer_name=user_name,
+                            amount=500,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Razorpay link generation failed for sender={sender}: {e}"
+                        )
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    if not pay_url:
+                        pay_url = DEFAULT_PAYMENT_URL
+
                     # Send CTA URL button for recharging (Scenario 1)
                     cta_sent = await send_whatsapp_cta_url_button(
                         recipient_id=sender,
                         body_text=confirm_msg,
                         button_label="Recharge to use",
-                        url=DEFAULT_PAYMENT_URL,
+                        url=pay_url,
                     )
 
                     # Fallback to plain text if CTA fails
@@ -254,7 +274,7 @@ async def receive_webhook(
                         fallback_msg = (
                             f"{confirm_msg}\n\n"
                             f"Current balance: ₹0 ⚠️\n"
-                            f"Recharge ₹500 to get started: {DEFAULT_PAYMENT_URL}"
+                            f"Recharge ₹500 to get started: {pay_url}"
                         )
                         await send_whatsapp_text(sender, fallback_msg)
 

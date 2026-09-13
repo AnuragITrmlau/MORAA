@@ -140,6 +140,16 @@ class Settings(BaseSettings):
     # Maximum WhatsApp image download size (bytes) — 5 MB safety limit
     META_MAX_MEDIA_BYTES: int = 5 * 1024 * 1024
 
+    # --- Razorpay Payments (wallet recharge) ---
+    # API credentials used to create dynamic recharge payment links.
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    # Webhook signing secret from the Razorpay dashboard. Verifies the
+    # X-Razorpay-Signature header (HMAC-SHA256) on every inbound webhook.
+    # When empty the webhook endpoint fails CLOSED and rejects all requests,
+    # so an unconfigured deployment can never credit a wallet.
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+
     # --- WhatsApp Onboarding Gate (new customer onboarding) ---
     # When False (DEFAULT) the WhatsApp pipeline behaves EXACTLY as before:
     # inbound text messages are logged and ignored, and the image →
