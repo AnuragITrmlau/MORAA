@@ -9,6 +9,7 @@ Responsibilities:
     - Trigger existing GemVision generation pipeline
     - Upload generated images to Meta media API
     - Send generated images back to WhatsApp users
+    - Deliver PDF invoices and multi-pack batch completions
 """
 
 import asyncio
@@ -274,12 +275,8 @@ def verify_webhook_signature(
 
 async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) -> bool:
     """Send an interactive button message to the user asking them to select a style."""
-    if not settings.META_WHATSAPP_TOKEN:
-        logger.error("META_WHATSAPP_TOKEN not configured — cannot send button message")
-        return False
-
-    if not settings.META_PHONE_NUMBER_ID:
-        logger.error("META_PHONE_NUMBER_ID not configured — cannot send button message")
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials not configured — cannot send button message")
         return False
 
     url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
@@ -424,7 +421,7 @@ async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
         return False
 
 
-# ─── Plain text + CTA button messages (onboarding) ────────────────────────
+# ─── Plain text + CTA button messages ─────────────────────────────────────
 
 
 async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
@@ -475,7 +472,7 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
 
 
 async def send_whatsapp_text(recipient_id: str, message_text: str) -> bool:
-    """Send a plain text WhatsApp message (Meta Graph API v21.0 payload)."""
+    """Send a plain text WhatsApp message."""
     return await send_text_message(recipient_id, message_text)
 
 
@@ -491,21 +488,13 @@ async def send_whatsapp_cta_url_button(
         return False
 
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
-        logger.error(
-            "send_whatsapp_cta_url_button: payment URL is missing or not an "
-            "absolute http(s) link — CTA not sent"
-        )
+        logger.error("send_whatsapp_cta_url_button: payment URL missing or invalid")
         return False
 
     display_text = (button_label or "").strip()
     if not display_text:
-        logger.error("send_whatsapp_cta_url_button: empty button label — CTA not sent")
         return False
     if len(display_text) > 20:
-        logger.warning(
-            f"send_whatsapp_cta_url_button: label truncated to Meta's 20-char limit "
-            f"(was {len(display_text)})"
-        )
         display_text = display_text[:20].rstrip()
 
     payload = {
@@ -530,9 +519,8 @@ async def send_whatsapp_cta_url_button(
 
 
 async def send_text_message(recipient_id: str, text: str) -> bool:
-    """Send a plain text message to a WhatsApp user via the Meta Send API."""
+    """Send a plain text message to a WhatsApp user."""
     if not recipient_id or not text:
-        logger.warning("send_text_message called without recipient or text — skipped")
         return False
 
     payload = {
@@ -553,7 +541,6 @@ async def send_interactive_cta_button(
 ) -> bool:
     """Send an interactive single-button (CTA) message."""
     if not recipient_id or not button_id or not button_title:
-        logger.warning("send_interactive_cta_button called without recipient/button — skipped")
         return False
 
     payload = {
@@ -586,6 +573,8 @@ async def send_interactive_cta_button(
 async def process_whatsapp_generation(
     ingestion_id: str,
     prompt_type: str = "prompt_ecommerce",
+    custom_caption: Optional[str] = None,
+    trigger_feedback: bool = True,
 ) -> bool:
     """Trigger the existing GemVision generation pipeline for a WhatsApp ingestion."""
     from app.database import SessionLocal
@@ -607,32 +596,19 @@ async def process_whatsapp_generation(
             return False
 
         if ingestion.status == "processing":
-            logger.info(
-                f"WhatsApp generation: skipping ingestion {ingestion_id} "
-                f"(status={ingestion.status}) — already in progress"
-            )
+            logger.info(f"WhatsApp generation: skipping ingestion {ingestion_id} — already in progress")
             return False
 
         ingestion.status = "processing"
         ingestion.error_message = None
         db.commit()
 
-        logger.info(
-            f"WhatsApp generation started: ingestion_id={ingestion_id} "
-            f"request_id={ingestion.request_id} user={ingestion.external_user_id} "
-            f"prompt_type={prompt_type}"
-        )
-
-        image_record = db.query(Image).filter(
-            Image.id == ingestion.image_id
-        ).first()
-
+        image_record = db.query(Image).filter(Image.id == ingestion.image_id).first()
         if not image_record:
             _fail_ingestion(db, ingestion, "Image record not found")
             return False
 
         from pathlib import Path
-
         image_path = Path(image_record.file_path)
         if not image_path.exists():
             _fail_ingestion(db, ingestion, f"Image file not found: {image_path}")
@@ -643,12 +619,7 @@ async def process_whatsapp_generation(
             _fail_ingestion(db, ingestion, "Image file is empty")
             return False
 
-        logger.info(
-            f"WhatsApp generation: read image file "
-            f"{len(reference_image_bytes)} bytes from {image_path}"
-        )
-
-        # ── Route to prompt builder ──
+        # Route prompt builder
         if prompt_type == "prompt_ecommerce":
             prompt = build_earring_ecommerce_prompt()
         elif prompt_type == "prompt_close_up":
@@ -656,9 +627,6 @@ async def process_whatsapp_generation(
         elif prompt_type == "prompt_ugc":
             prompt = build_ugc_style_prompt()
         else:
-            logger.warning(
-                f"Unknown prompt_type '{prompt_type}' — falling back to prompt_ecommerce"
-            )
             prompt = build_earring_ecommerce_prompt()
 
         manager = ImageGenerationManager()
@@ -670,29 +638,20 @@ async def process_whatsapp_generation(
         )
 
         if not result.success:
-            _fail_ingestion(
-                db, ingestion,
-                f"Generation failed: {result.error} (provider={result.provider_name})"
-            )
+            _fail_ingestion(db, ingestion, f"Generation failed: {result.error}")
             return False
-
-        logger.info(
-            f"WhatsApp generation: succeeded "
-            f"provider={result.provider_name} "
-            f"time={result.processing_time:.2f}s request_id={ingestion.request_id}"
-        )
 
         ingestion.status = "generated"
         db.commit()
 
         image_data_url = result.image_url
         if not image_data_url:
-            _fail_ingestion(db, ingestion, "Generation succeeded but no image data returned")
+            _fail_ingestion(db, ingestion, "No image data returned")
             return False
 
         generated_image_bytes = _data_url_to_bytes(image_data_url)
         if not generated_image_bytes:
-            _fail_ingestion(db, ingestion, "Failed to decode generated image data")
+            _fail_ingestion(db, ingestion, "Failed to decode image data")
             return False
 
         media_id = await upload_media_to_meta(generated_image_bytes)
@@ -700,13 +659,7 @@ async def process_whatsapp_generation(
             _fail_delivery(db, ingestion, "Meta media upload failed")
             return False
 
-        logger.info(
-            f"WhatsApp generation: Meta media uploaded "
-            f"media_id={media_id[:20]}... request_id={ingestion.request_id}"
-        )
-
-        # Exact target caption with balance notice
-        send_caption = "Here’s your E-commerce Pack 1 📦✨\nRemaining balance: ₹0"
+        send_caption = custom_caption if custom_caption is not None else "Here’s your E-commerce Pack 1 📦✨\nRemaining balance: ₹0"
 
         send_ok = await send_image_to_whatsapp(
             recipient_id=ingestion.external_user_id,
@@ -722,69 +675,45 @@ async def process_whatsapp_generation(
         ingestion.error_message = None
         db.commit()
 
-        logger.info(
-            f"WhatsApp generation: delivered successfully "
-            f"ingestion_id={ingestion_id} user={ingestion.external_user_id}"
-        )
-
-        # ── Trigger Post-Generation Feedback Buttons ──
-        try:
-            await asyncio.sleep(1.5)
-            await send_feedback_buttons(
-                recipient_id=ingestion.external_user_id,
-                ingestion_id=ingestion_id,
-            )
-        except Exception as fb_err:
-            logger.error(f"Failed to dispatch post-generation feedback buttons: {fb_err}")
+        if trigger_feedback:
+            try:
+                await asyncio.sleep(1.5)
+                await send_feedback_buttons(
+                    recipient_id=ingestion.external_user_id,
+                    ingestion_id=ingestion_id,
+                )
+            except Exception as fb_err:
+                logger.error(f"Feedback buttons error: {fb_err}")
 
         return True
 
     except Exception as e:
-        logger.error(f"WhatsApp generation: unexpected error: {e}")
-        try:
-            ingestion = db.query(WhatsAppIngestion).filter(
-                WhatsAppIngestion.id == ingestion_id
-            ).first()
-            if ingestion and ingestion.status in ("stored", "processing"):
-                _fail_ingestion(db, ingestion, f"Unexpected error: {str(e)}")
-        except Exception:
-            pass
+        logger.error(f"WhatsApp generation exception: {e}")
         return False
     finally:
         db.close()
 
 
 def _fail_ingestion(db, ingestion, error_message: str) -> None:
-    """Mark an ingestion as failed with an error message."""
     ingestion.status = "failed"
     ingestion.error_message = error_message
     db.commit()
-    logger.error(
-        f"WhatsApp generation failed: ingestion_id={ingestion.id} "
-        f"error={error_message}"
-    )
+    logger.error(f"WhatsApp generation failed: ingestion_id={ingestion.id} error={error_message}")
 
 
 def _fail_delivery(db, ingestion, error_message: str) -> None:
-    """Mark delivery failure separately from generation failure."""
     ingestion.status = "delivery_failed"
     ingestion.error_message = error_message
     db.commit()
-    logger.error(
-        f"WhatsApp delivery failed: ingestion_id={ingestion.id} "
-        f"error={error_message}"
-    )
+    logger.error(f"WhatsApp delivery failed: ingestion_id={ingestion.id} error={error_message}")
 
 
 def _data_url_to_bytes(data_url: str) -> Optional[bytes]:
-    """Convert a data:image/...;base64,... URL to raw bytes."""
     import base64
-
     try:
         if not data_url.startswith("data:"):
             return None
-
-        header, payload = data_url.split(",", 1)
+        _, payload = data_url.split(",", 1)
         return base64.b64decode(payload)
     except Exception:
         return None
@@ -798,23 +727,15 @@ async def upload_media_to_meta(
     mime_type: str = "image/png",
 ) -> Optional[str]:
     """Upload an image to Meta's WhatsApp media API."""
-    if not settings.META_WHATSAPP_TOKEN:
-        logger.error("META_WHATSAPP_TOKEN not configured — cannot upload media")
-        return None
-
-    if not settings.META_PHONE_NUMBER_ID:
-        logger.error("META_PHONE_NUMBER_ID not configured — cannot upload media")
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials missing for media upload")
         return None
 
     url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            ext_map = {
-                "image/png": ".png",
-                "image/jpeg": ".jpg",
-                "image/webp": ".webp",
-            }
+            ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
             ext = ext_map.get(mime_type, ".png")
 
             response = await client.post(
@@ -829,18 +750,10 @@ async def upload_media_to_meta(
                 return None
 
             data = response.json()
-            media_id = data.get("id")
-            if not media_id:
-                logger.error(f"Meta media upload response missing 'id': {data}")
-                return None
+            return data.get("id")
 
-            return media_id
-
-    except httpx.TimeoutException:
-        logger.error("Meta media upload timed out")
-        return None
     except Exception as e:
-        logger.error(f"Meta media upload failed: {e}")
+        logger.error(f"Meta media upload exception: {e}")
         return None
 
 
@@ -853,16 +766,10 @@ async def send_image_to_whatsapp(
     caption: str = "Your e-commerce image is ready.",
 ) -> bool:
     """Send an image message to a WhatsApp user via Meta Send API."""
-    if not settings.META_WHATSAPP_TOKEN:
-        logger.error("META_WHATSAPP_TOKEN not configured — cannot send message")
-        return False
-
-    if not settings.META_PHONE_NUMBER_ID:
-        logger.error("META_PHONE_NUMBER_ID not configured — cannot send message")
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
         return False
 
     url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-
     payload = {
         "messaging_product": "whatsapp",
         "to": recipient_id,
@@ -883,26 +790,7 @@ async def send_image_to_whatsapp(
                 },
                 json=payload,
             )
-
-            if response.status_code != 200:
-                logger.error(f"Meta send message failed: status={response.status_code}")
-                return False
-
-            data = response.json()
-            messages = data.get("messages", [])
-            if not messages:
-                logger.error(f"Meta send message response missing 'messages': {data}")
-                return False
-
-            logger.info(
-                f"Meta message sent: recipient={recipient_id} "
-                f"message_id={messages[0].get('id', '')}"
-            )
-            return True
-
-    except httpx.TimeoutException:
-        logger.error("Meta send message timed out")
-        return False
+            return response.status_code == 200
     except Exception as e:
         logger.error(f"Meta send message failed: {e}")
         return False
@@ -924,7 +812,6 @@ async def send_document_to_whatsapp(
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # 1. Upload Document
             files = {"file": (filename, document_bytes, "application/pdf")}
             data = {"messaging_product": "whatsapp", "type": "application/pdf"}
             headers = {"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"}
@@ -936,7 +823,6 @@ async def send_document_to_whatsapp(
 
             media_id = upload_resp.json().get("id")
 
-            # 2. Send Document Message
             payload = {
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",

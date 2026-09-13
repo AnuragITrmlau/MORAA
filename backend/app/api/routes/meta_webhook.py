@@ -1,9 +1,9 @@
 """Meta WhatsApp Cloud API webhook routes.
 
-Implements the official WhatsApp webhook verification and event reception
-endpoints. Ingests incoming WhatsApp images, validates via AI Quality Guard,
-enforces Scenario 2 zero-balance wallet gating, handles custom recharges (>= ₹500),
-and forwards to AI generation.
+Implements Scenario 1 (Onboarding & Registration),
+Scenario 2 (Zero-balance Wallet Gate),
+Scenario 3 (Partial Order: e.g. ₹1000 balance for 3 uploaded images),
+Dynamic Custom Recharges (>= ₹500), and AI Quality Guard.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,7 +18,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.customer import Customer
 from app.models.whatsapp_ingestion import WhatsAppIngestion
 from app.repositories.base import BaseRepository
@@ -28,6 +28,7 @@ from app.services.meta_whatsapp_service import (
     get_media_url,
     parse_webhook_entry,
     process_whatsapp_generation,
+    send_feedback_buttons,
     send_prompt_selection_buttons,
     send_whatsapp_cta_url_button,
     send_whatsapp_text,
@@ -42,36 +43,82 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
 DEFAULT_PAYMENT_URL = "https://rzp.io/l/moraa-recharge"
+COST_PER_PRODUCT = 500
 
 
-# ─── Direct WhatsApp Message Sender Helper ──────────────────────────────
+def _ordinal(n: int) -> str:
+    """Helper for 1st, 2nd, 3rd, 4th."""
+    if 11 <= (n % 100) <= 13:
+        return f"{n}th"
+    return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
 
 
-async def send_direct_whatsapp_text(recipient_id: str, message_text: str) -> bool:
-    """Sends a direct WhatsApp text message using Meta Cloud API."""
-    return await send_whatsapp_text(recipient_id, message_text)
+def _find_customer_safe(db: Session, sender: str) -> Optional[Customer]:
+    """Helper to find customer regardless of leading + or 91 country code differences."""
+    clean_sender = sender.lstrip("+").strip()
+    c = get_customer(db, clean_sender) or get_customer(db, sender)
+    if not c and len(clean_sender) >= 10:
+        c = db.query(Customer).filter(Customer.whatsapp_id.contains(clean_sender[-10:])).first()
+    return c
 
 
-# ─── Background generation trigger ──────────────────────────────────────
+# ─── Background Scenario 3 Delivery Worker ──────────────────────────────
 
 
-async def _trigger_generation(ingestion_id: str) -> None:
-    """Background task that triggers GemVision generation for a stored ingestion."""
-    try:
-        success = await process_whatsapp_generation(ingestion_id)
-        if success:
-            logger.info(f"Background generation completed: ingestion_id={ingestion_id}")
-        else:
-            logger.warning(f"Background generation failed: ingestion_id={ingestion_id}")
-    except Exception as e:
-        logger.error(f"Background generation exception: ingestion_id={ingestion_id} error={e}")
+async def process_partial_order_batch(
+    sender: str,
+    ingestion_ids: List[str],
+    processed_count: int,
+    unprocessed_count: int,
+) -> None:
+    total_images_in_packs = processed_count * 8
+
+    for idx, ing_id in enumerate(ingestion_ids):
+        is_last = (idx == len(ingestion_ids) - 1)
+        pack_caption = (
+            f"Here are your {total_images_in_packs} images across {processed_count} E-commerce Packs 📦✨\n"
+            f"Remaining balance: ₹0"
+            if is_last else ""
+        )
+        await process_whatsapp_generation(
+            ingestion_id=ing_id,
+            prompt_type="prompt_ecommerce",
+            custom_caption=pack_caption,
+            trigger_feedback=is_last,
+        )
+        await asyncio.sleep(1)
+
+    if unprocessed_count > 0:
+        unprocessed_idx = processed_count + 1
+        ordinal_unprocessed = _ordinal(unprocessed_idx)
+
+        try:
+            recharge_url = await create_recharge_payment_link(
+                customer_phone=sender,
+                customer_name="Customer",
+                amount=500,
+            )
+        except Exception:
+            recharge_url = DEFAULT_PAYMENT_URL
+
+        reminder_text = (
+            f"To process your {ordinal_unprocessed} image, please make a "
+            f"payment to continue ⚠️"
+        )
+
+        await asyncio.sleep(2)
+        await send_whatsapp_cta_url_button(
+            recipient_id=sender,
+            body_text=reminder_text,
+            button_label="Pay ₹500 to continue",
+            url=recharge_url or DEFAULT_PAYMENT_URL,
+        )
 
 
 def _handle_button_reply(
     event: Dict[str, Any],
     db: Session,
 ) -> Optional[Tuple[str, str]]:
-    """Handle an interactive button_reply event."""
     button_reply = event.get("button_reply", {})
     button_id = button_reply.get("id", "")
     button_title = button_reply.get("title", "")
@@ -79,33 +126,22 @@ def _handle_button_reply(
     message_id = event.get("message_id", "")
 
     if not button_id:
-        logger.warning(f"Button reply missing id: sender={sender} message_id={message_id[:20]}...")
         return None
 
     parts = button_id.split(":", 1)
     if len(parts) != 2:
-        logger.warning(f"Invalid button_reply.id format: id={button_id}")
         return None
 
     prompt_type = parts[0]
     ingestion_id = parts[1]
 
-    if not ingestion_id:
-        logger.warning(f"Empty ingestion_id in button_reply.id: id={button_id}")
+    if not ingestion_id or prompt_type not in ("prompt_ecommerce", "prompt_close_up", "prompt_ugc"):
         return None
-
-    if prompt_type not in ("prompt_ecommerce", "prompt_close_up", "prompt_ugc"):
-        return None
-
-    logger.info(
-        f"Button reply received: sender={sender} button='{button_title}' prompt_type={prompt_type} ingestion_id={ingestion_id}"
-    )
 
     try:
         ingestion_repo = BaseRepository(WhatsAppIngestion, db)
         existing = ingestion_repo.find_first(id=ingestion_id)
         if not existing or not existing.image_id:
-            logger.warning(f"Button reply references invalid ingestion: {ingestion_id}")
             return None
     except Exception as e:
         logger.error(f"Button reply ingestion lookup failed: {e}")
@@ -118,18 +154,13 @@ def _handle_button_reply(
 # ─── GET — Webhook Verification ──────────────────────────────────────────
 
 
-@router.get(
-    "/webhook",
-    summary="Meta webhook verification",
-)
+@router.get("/webhook", summary="Meta webhook verification")
 async def verify_webhook(
     hub_mode: Optional[str] = None,
     hub_verify_token: Optional[str] = None,
     hub_challenge: Optional[str] = None,
 ) -> PlainTextResponse:
-    """Verify webhook ownership with Meta."""
     if hub_mode != "subscribe" or not hub_verify_token or hub_verify_token != settings.META_VERIFY_TOKEN:
-        logger.warning("Webhook verification token mismatch")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid verification token or mode",
@@ -141,24 +172,18 @@ async def verify_webhook(
             detail="Missing challenge parameter",
         )
 
-    logger.info("Webhook verification successful")
     return PlainTextResponse(content=hub_challenge)
 
 
 # ─── POST — Webhook Event Receiver ───────────────────────────────────────
 
 
-@router.post(
-    "/webhook",
-    summary="Receive WhatsApp webhook events",
-)
+@router.post("/webhook", summary="Receive WhatsApp webhook events")
 async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Receive and process WhatsApp webhook events safely without body-stream locks."""
-
     try:
         payload = await request.json()
     except Exception as e:
@@ -169,7 +194,6 @@ async def receive_webhook(
         signature = request.headers.get("X-Hub-Signature-256")
         raw_body_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')
         if not verify_webhook_signature(raw_body_bytes, signature):
-            logger.warning("Webhook signature verification failed")
             return {"status": "error", "message": "Invalid signature"}
 
     if payload.get("object") == "whatsapp_business_account" and "entry" not in payload:
@@ -183,12 +207,7 @@ async def receive_webhook(
         return {"status": "ignored", "message": "No entries in webhook payload"}
 
     ingestion_repo = BaseRepository(WhatsAppIngestion, db)
-    image_count = 0
-    stored_count = 0
-    button_sent_count = 0
-    button_reply_count = 0
-    skipped_count = 0
-    onboarding_handled_count = 0
+    image_events: List[Dict[str, Any]] = []
 
     for entry in entries:
         events = parse_webhook_entry(entry)
@@ -196,19 +215,89 @@ async def receive_webhook(
         for event in events:
             event_type = event.get("type", "")
 
-            # ── Status events ──
             if event_type == "status":
                 continue
 
-            # ── Text messages (Scenario 1: Welcome & Registration + Custom Recharge) ──
+            # ── Text messages ──
             if event_type == "text":
                 sender = event.get("sender", "")
                 raw_text = event.get("body", "").strip()
                 lower_text = raw_text.lower()
                 logger.info(f"Text message received: sender={sender} text='{raw_text}'")
 
-                # Check 1: Greeting triggers two sequential bubbles
-                if any(greet in lower_text for greet in ["hi", "hii", "hello", "hey", "start"]):
+                # PRIORITY 1: Registration Form Check (MUST BE CHECKED FIRST)
+                if "name:" in lower_text and ("business" in lower_text or "gst" in lower_text):
+                    user_name = "there"
+                    biz_name = "Jewelry Business"
+                    gst_val = "N/A"
+                    addr_val = "N/A"
+
+                    for line in raw_text.splitlines():
+                        line_clean = line.strip()
+                        l_low = line_clean.lower()
+                        if l_low.startswith("name:"):
+                            extracted = line_clean.split(":", 1)[1].strip()
+                            if extracted:
+                                user_name = extracted.split()[0]
+                        elif "business name" in l_low and ":" in line_clean:
+                            extracted_biz = line_clean.split(":", 1)[1].strip()
+                            if extracted_biz:
+                                biz_name = extracted_biz
+                        elif "gst" in l_low and ":" in line_clean:
+                            extracted_gst = line_clean.split(":", 1)[1].strip()
+                            if extracted_gst:
+                                gst_val = extracted_gst
+                        elif "address" in l_low and ":" in line_clean:
+                            extracted_addr = line_clean.split(":", 1)[1].strip()
+                            if extracted_addr:
+                                addr_val = extracted_addr
+
+                    clean_sender = sender.lstrip("+").strip()
+                    cust = _find_customer_safe(db, sender)
+                    
+                    if not cust:
+                        cust = Customer(
+                            whatsapp_id=clean_sender,
+                            full_name=user_name,
+                            business_name=biz_name,
+                            gst_number=gst_val,
+                            address=addr_val,
+                            wallet_balance=0,
+                            is_registered=True,
+                        )
+                        db.add(cust)
+                    else:
+                        cust.full_name = user_name
+                        cust.business_name = biz_name
+                        cust.gst_number = gst_val
+                        cust.address = addr_val
+                        cust.is_registered = True
+
+                    db.commit()
+
+                    confirm_msg = (
+                        f"Congratulations {user_name}! You’re registered with Moraa Studio 🎉\n"
+                        f"You’re all set to start creating stunning product photos."
+                    )
+                    try:
+                        pay_url = await create_recharge_payment_link(
+                            customer_phone=sender,
+                            customer_name=user_name,
+                            amount=500,
+                        )
+                    except Exception:
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    await send_whatsapp_cta_url_button(
+                        recipient_id=sender,
+                        body_text=confirm_msg,
+                        button_label="Recharge to use",
+                        url=pay_url or DEFAULT_PAYMENT_URL,
+                    )
+                    continue
+
+                # PRIORITY 2: Standalone Greetings (Exact whole words via \b)
+                if re.search(r"\b(hi|hii|hello|hey|start)\b", lower_text):
                     msg_part_1 = (
                         "Hi there! Welcome to Moraa Studio ✨\n"
                         "We help you turn raw jewelry photos into polished, e-commerce ready images — powered by AI 💎"
@@ -222,129 +311,58 @@ async def receive_webhook(
                         "GST number:\n"
                         "Business address:"
                     )
-
-                    ok_1 = await send_whatsapp_text(sender, msg_part_1)
+                    await send_whatsapp_text(sender, msg_part_1)
                     await asyncio.sleep(1)
-                    ok_2 = await send_whatsapp_text(sender, msg_part_2)
-
-                    if ok_1 or ok_2:
-                        onboarding_handled_count += 1
+                    await send_whatsapp_text(sender, msg_part_2)
                     continue
 
-                # Check 2: Filled Registration Details Received -> Confirm + Payment CTA
-                if "name:" in lower_text and "business" in lower_text:
-                    user_name = "there"
-                    for line in raw_text.splitlines():
-                        if line.lower().startswith("name:"):
-                            extracted = line.split(":", 1)[1].strip()
-                            if extracted:
-                                user_name = extracted.split()[0]
-                            break
-
-                    confirm_msg = (
-                        f"Congratulations {user_name}! You’re registered with Moraa Studio 🎉\n"
-                        f"You’re all set to start creating stunning product photos."
-                    )
-
-                    try:
-                        pay_url = await create_recharge_payment_link(
-                            customer_phone=sender,
-                            customer_name=user_name,
-                            amount=500,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Razorpay link generation failed for sender={sender}: {e}"
-                        )
-                        pay_url = DEFAULT_PAYMENT_URL
-
-                    if not pay_url:
-                        pay_url = DEFAULT_PAYMENT_URL
-
-                    cta_sent = await send_whatsapp_cta_url_button(
-                        recipient_id=sender,
-                        body_text=confirm_msg,
-                        button_label="Recharge to use",
-                        url=pay_url,
-                    )
-
-                    if not cta_sent:
-                        fallback_msg = (
-                            f"{confirm_msg}\n\n"
-                            f"Current balance: ₹0 ⚠️\n"
-                            f"Recharge ₹500 to get started: {pay_url}"
-                        )
-                        await send_whatsapp_text(sender, fallback_msg)
-
-                    onboarding_handled_count += 1
-                    continue
-
-                # Check 3: Custom Recharge Command (e.g., 'recharge 1000', 'pay 500', 'add 1500')
+                # PRIORITY 3: Custom Recharge Command (>= ₹500)
                 recharge_match = re.search(r"\b(?:recharge|pay|add)\s*(?:rs\.?|inr|₹)?\s*(\d+)\b", lower_text)
                 if recharge_match:
                     requested_amount = int(recharge_match.group(1))
-
                     if requested_amount < 500:
-                        error_msg = (
-                            "Minimum recharge amount is ₹500 ⚠️\n"
-                            "Please enter an amount of ₹500 or more (e.g. 'recharge 500', 'recharge 1000')."
+                        await send_whatsapp_text(
+                            sender,
+                            "Minimum recharge amount is ₹500 ⚠️\nPlease enter an amount of ₹500 or more."
                         )
-                        await send_whatsapp_text(sender, error_msg)
                         continue
 
-                    customer = get_customer(db, sender) or get_customer(db, sender.lstrip("+"))
-                    customer_name = customer.name if customer and customer.name else "Valued Customer"
-
+                    cust = _find_customer_safe(db, sender)
+                    cust_name = getattr(cust, "full_name", "Customer") if cust else "Customer"
                     try:
                         pay_url = await create_recharge_payment_link(
                             customer_phone=sender,
-                            customer_name=customer_name,
+                            customer_name=cust_name,
                             amount=requested_amount,
                         )
-                    except Exception as e:
-                        logger.error(f"Custom recharge link generation failed for {sender}: {e}")
+                    except Exception:
                         pay_url = DEFAULT_PAYMENT_URL
 
-                    if not pay_url:
-                        pay_url = DEFAULT_PAYMENT_URL
-
-                    cta_body = f"Here is your recharge link for ₹{requested_amount} 💳\nTap below to complete the payment."
-                    btn_text = f"Pay ₹{requested_amount}"
-                    if len(btn_text) > 20:
-                        btn_text = "Pay Now"
-
-                    sent_btn = await send_whatsapp_cta_url_button(
+                    await send_whatsapp_cta_url_button(
                         recipient_id=sender,
-                        body_text=cta_body,
-                        button_label=btn_text,
-                        url=pay_url,
+                        body_text=f"Here is your recharge link for ₹{requested_amount} 💳\nTap below to complete the payment.",
+                        button_label=f"Pay ₹{requested_amount}"[:20],
+                        url=pay_url or DEFAULT_PAYMENT_URL,
                     )
-
-                    if not sent_btn:
-                        await send_whatsapp_text(sender, f"{cta_body}\n\nLink: {pay_url}")
-
                     continue
 
                 continue
 
-            # ── Interactive button replies (Style Selection & Feedback) ──
+            # ── Interactive button replies ──
             if event_type == "interactive" and event.get("subtype") == "button_reply":
-                button_reply_count += 1
                 button_reply = event.get("button_reply", {})
                 b_id = button_reply.get("id", "")
                 sender = event.get("sender", "")
 
-                # Handle Feedback reply
                 if b_id.startswith("feedback_"):
-                    if b_id.startswith("feedback_positive"):
-                        fb_response = "Thank you so much for the love! Glad you liked it 🎉 Send your next photo anytime!"
-                    else:
-                        fb_response = "Thanks for letting us know! We’re constantly training our model. You can retry with another angle or lighting 📸"
-
+                    fb_response = (
+                        "Thank you so much for the love! Glad you liked it 🎉 Send your next photo anytime!"
+                        if b_id.startswith("feedback_positive")
+                        else "Thanks for letting us know! We’re constantly training our model. You can retry with another angle or lighting 📸"
+                    )
                     await send_whatsapp_text(recipient_id=sender, message_text=fb_response)
                     continue
 
-                # Handle Generation Style selection
                 button_selection = _handle_button_reply(event, db)
                 if button_selection:
                     prompt_type, ingestion_id = button_selection
@@ -353,186 +371,160 @@ async def receive_webhook(
                         ingestion_id,
                         prompt_type,
                     )
-                    logger.info(
-                        f"Generation queued via background task: ingestion_id={ingestion_id} prompt_type={prompt_type}"
-                    )
                 continue
 
-            # ── Unsupported events ──
             if event_type in ("interactive", "unsupported"):
                 continue
 
-            # ── Image messages (Supports Single & Multi-photo Upload batches) ──
-            if event_type != "image":
-                continue
+            # ── Collect images ──
+            if event_type == "image":
+                image_events.append(event)
 
-            image_count += 1
-            message_id = event.get("message_id", "")
-            sender = event.get("sender", "")
-            media_id = event.get("media_id", "")
-            mime_type = event.get("mime_type", "")
-            caption = event.get("caption", "")
-            timestamp = event.get("timestamp", "")
+    if not image_events:
+        return {"status": "ok", "images_processed": 0}
 
-            # ── Scenario 2: Zero Balance Wallet Gate ──
-            wallet_gate_active = getattr(settings, "ENABLE_WALLET_GATE", False)
-            if wallet_gate_active:
-                customer = get_customer(db, sender) or get_customer(db, sender.lstrip("+"))
-                current_balance = customer.wallet_balance if customer else 0
+    sender = image_events[0].get("sender", "")
+    customer = _find_customer_safe(db, sender)
+    current_balance = customer.wallet_balance if customer else 0
+    total_images = len(image_events)
 
-                if current_balance <= 0:
-                    try:
-                        customer_name = customer.name if customer and customer.name else "Customer"
-                        pay_url = await create_recharge_payment_link(
-                            customer_phone=sender,
-                            customer_name=customer_name,
-                            amount=500,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error creating gate recharge link for {sender}: {e}")
-                        pay_url = DEFAULT_PAYMENT_URL
+    logger.info(f"Image received from {sender}. DB Balance: ₹{current_balance}")
 
-                    if not pay_url:
-                        pay_url = DEFAULT_PAYMENT_URL
-
-                    zero_balance_msg = (
-                        "Your current balance is ₹0 ⚠️\n"
-                        "Please make a payment to continue."
-                    )
-
-                    sent_gate = await send_whatsapp_cta_url_button(
-                        recipient_id=sender,
-                        body_text=zero_balance_msg,
-                        button_label="Pay ₹500",
-                        url=pay_url,
-                    )
-                    if not sent_gate:
-                        await send_whatsapp_text(
-                            sender,
-                            f"{zero_balance_msg}\n\nPay ₹500 here: {pay_url}",
-                        )
-                    logger.info(f"Wallet gate held image for user={sender} (balance={current_balance})")
-                    continue
-
-            # Idempotency check per message
-            try:
-                existing = ingestion_repo.find_first(external_message_id=message_id)
-                if existing:
-                    skipped_count += 1
-                    continue
-            except Exception as e:
-                logger.error(f"Idempotency check query failed: {e}")
-                db.rollback()
-
-            if not media_id:
-                continue
-
-            try:
-                media_url = await get_media_url(media_id)
-            except Exception as e:
-                logger.error(f"Exception calling get_media_url: {e}")
-                media_url = None
-
-            if not media_url:
-                continue
-
-            try:
-                download_result = await download_media(media_url)
-            except Exception as e:
-                logger.error(f"Exception downloading media: {e}")
-                download_result = None
-
-            if not download_result:
-                continue
-
-            image_bytes, content_type = download_result
-
-            # 1. Local MIME & Size Validation
-            is_valid, error_msg = validate_image(image_bytes, content_type)
-            if not is_valid:
-                continue
-
-            # 2. AI Quality Guard (Gemini Pre-validation)
-            ai_valid, tip_msg = await validate_jewelry_image_with_gemini(
-                image_bytes=image_bytes,
-                mime_type=content_type,
+    # Scenario 2: Zero Balance Wallet Gate
+    if current_balance <= 0:
+        cust_name = getattr(customer, "full_name", "Customer") if customer else "Customer"
+        try:
+            pay_url = await create_recharge_payment_link(
+                customer_phone=sender,
+                customer_name=cust_name,
+                amount=500,
             )
-            if not ai_valid:
-                reject_text = (
-                    "Photo quality check ⚠️\n\n"
-                    f"{tip_msg}\n\n"
-                    "Please snap a new photo and upload again!"
-                )
-                await send_whatsapp_text(sender, reject_text)
-                logger.info(f"AI Quality Guard rejected photo from {sender}")
-                continue
+        except Exception:
+            pay_url = DEFAULT_PAYMENT_URL
 
-            # 3. Store and Dispatch Style Options for Valid Photo
-            try:
-                ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-                ext = ext_map.get(content_type, "jpg")
-                filename = f"whatsapp_{message_id[:20]}.{ext}"
+        zero_balance_msg = (
+            "Your current balance is ₹0 ⚠️\n"
+            "Please make a payment to continue."
+        )
+        await send_whatsapp_cta_url_button(
+            recipient_id=sender,
+            body_text=zero_balance_msg,
+            button_label="Pay ₹500",
+            url=pay_url or DEFAULT_PAYMENT_URL,
+        )
+        return {"status": "held_zero_balance"}
 
-                upload_service = UploadService(db)
-                upload_result = await upload_service.process_upload(
-                    file_data=image_bytes,
-                    filename=filename,
-                    file_size=len(image_bytes),
-                    mime_type=content_type,
-                )
+    # Scenario 3: Partial Order Calculation
+    allowed_count = current_balance // COST_PER_PRODUCT
+    is_partial = (total_images > allowed_count and allowed_count > 0)
 
-                ingestion = ingestion_repo.create(
-                    external_user_id=sender,
-                    external_message_id=message_id,
-                    external_media_id=media_id,
-                    channel="whatsapp",
-                    caption=caption,
-                    mime_type=content_type,
-                    timestamp=timestamp,
-                    image_id=upload_result.id,
-                    file_size=len(image_bytes),
-                    status="stored",
-                )
+    if is_partial:
+        unprocessed_idx = allowed_count + 1
+        ordinal_unprocessed = _ordinal(unprocessed_idx)
+
+        msg_partial_breakdown = (
+            f"Your balance is ₹{current_balance:,} — enough for {allowed_count} of "
+            f"these {total_images} images (₹{COST_PER_PRODUCT} each) 💰\n"
+            f"We’ll process {allowed_count} now, and you’ll need to recharge for the {ordinal_unprocessed}."
+        )
+        await send_whatsapp_text(sender, msg_partial_breakdown)
+        await asyncio.sleep(1)
+
+        msg_processing_now = (
+            f"Processing your {allowed_count} images now ✅\n"
+            f"Ready in 2-3 minutes ⏳"
+        )
+        await send_whatsapp_text(sender, msg_processing_now)
+
+    images_to_process = image_events[:allowed_count] if is_partial else image_events
+    processed_ingestion_ids: List[str] = []
+
+    for img_ev in images_to_process:
+        message_id = img_ev.get("message_id", "")
+        media_id = img_ev.get("media_id", "")
+        mime_type = img_ev.get("mime_type", "")
+        caption = img_ev.get("caption", "")
+        timestamp = img_ev.get("timestamp", "")
+
+        existing = ingestion_repo.find_first(external_message_id=message_id)
+        if existing:
+            continue
+
+        media_url = await get_media_url(media_id)
+        if not media_url:
+            continue
+
+        download_result = await download_media(media_url)
+        if not download_result:
+            continue
+
+        image_bytes, content_type = download_result
+        is_valid, _ = validate_image(image_bytes, content_type)
+        if not is_valid:
+            continue
+
+        # AI Quality Guard
+        ai_valid, tip_msg = await validate_jewelry_image_with_gemini(image_bytes, content_type)
+        if not ai_valid:
+            reject_text = f"Photo quality check ⚠️\n\n{tip_msg}\n\nPlease snap a new photo and upload again!"
+            await send_whatsapp_text(sender, reject_text)
+            continue
+
+        ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+        ext = ext_map.get(content_type, "jpg")
+        filename = f"whatsapp_{message_id[:20]}.{ext}"
+
+        upload_service = UploadService(db)
+        upload_result = await upload_service.process_upload(
+            file_data=image_bytes,
+            filename=filename,
+            file_size=len(image_bytes),
+            mime_type=content_type,
+        )
+
+        ingestion = ingestion_repo.create(
+            external_user_id=sender,
+            external_message_id=message_id,
+            external_media_id=media_id,
+            channel="whatsapp",
+            caption=caption,
+            mime_type=content_type,
+            timestamp=timestamp,
+            image_id=upload_result.id,
+            file_size=len(image_bytes),
+            status="stored",
+        )
+        db.commit()
+
+        # Deduct wallet per processed item
+        if customer and customer.wallet_balance >= COST_PER_PRODUCT:
+            customer.wallet_balance -= COST_PER_PRODUCT
+            db.commit()
+
+        processed_ingestion_ids.append(ingestion.id)
+
+        if not is_partial:
+            send_ok = await send_prompt_selection_buttons(recipient_id=sender, ingestion_id=ingestion.id)
+            if send_ok:
+                ingestion.status = "awaiting_selection"
                 db.commit()
-                stored_count += 1
 
-                send_ok = await send_prompt_selection_buttons(
-                    recipient_id=sender,
-                    ingestion_id=ingestion.id,
-                )
-                if send_ok:
-                    button_sent_count += 1
-                    ingestion.status = "awaiting_selection"
-                    db.commit()
+    if is_partial and processed_ingestion_ids:
+        background_tasks.add_task(
+            process_partial_order_batch,
+            sender=sender,
+            ingestion_ids=processed_ingestion_ids,
+            processed_count=allowed_count,
+            unprocessed_count=total_images - allowed_count,
+        )
 
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to store WhatsApp image: {e}")
-
-    logger.info(
-        f"Webhook batch processed: images={image_count} stored={stored_count} "
-        f"buttons_sent={button_sent_count} button_replies={button_reply_count} "
-        f"skipped={skipped_count} onboarding_handled={onboarding_handled_count}"
-    )
-
-    return {
-        "status": "ok",
-        "images_received": image_count,
-        "images_stored": stored_count,
-        "buttons_sent": button_sent_count,
-        "button_replies_handled": button_reply_count,
-        "duplicates_skipped": skipped_count,
-        "onboarding_handled": onboarding_handled_count,
-    }
+    return {"status": "ok", "queued": len(processed_ingestion_ids)}
 
 
 # ─── GET — Health Check ──────────────────────────────────────────────────
 
 
-@router.get(
-    "/webhook/health",
-    summary="Meta webhook health check",
-)
+@router.get("/webhook/health", summary="Meta webhook health check")
 async def webhook_health() -> Dict[str, Any]:
     return {
         "status": "ready",

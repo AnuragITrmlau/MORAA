@@ -1,8 +1,6 @@
 """Razorpay payment webhook routes — wallet recharge lifecycle.
 
-This module is ADDITIVE: it wires Razorpay's asynchronous ``payment_link.paid``
-webhook to the existing Moraa Studio wallet. No existing ingestion, media
-download or Gemini generation handler is touched.
+Wires Razorpay's asynchronous payment_link.paid webhook to Moraa Studio wallet.
 """
 
 import asyncio
@@ -28,8 +26,6 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
-# ─── Constants ───────────────────────────────────────────────────────────
-
 SIGNATURE_HEADER = "X-Razorpay-Signature"
 EVENT_PAYMENT_LINK_PAID = "payment_link.paid"
 PAISE_PER_RUPEE = 100
@@ -48,20 +44,11 @@ PAYMENT_TIPS_MESSAGE = (
 )
 
 
-# ─── Signature verification ──────────────────────────────────────────────
-
-
 def verify_razorpay_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
-    """Verify Razorpay's HMAC-SHA256 ``X-Razorpay-Signature`` header."""
     secret = (settings.RAZORPAY_WEBHOOK_SECRET or "").strip()
     if not secret:
-        logger.error(
-            "RAZORPAY_WEBHOOK_SECRET not configured — rejecting Razorpay webhook"
-        )
         return False
-
     if not signature_header:
-        logger.warning("Razorpay webhook missing X-Razorpay-Signature header")
         return False
 
     computed = hmac.new(
@@ -70,18 +57,10 @@ def verify_razorpay_signature(raw_body: bytes, signature_header: Optional[str]) 
         hashlib.sha256,
     ).hexdigest()
 
-    if not hmac.compare_digest(computed, signature_header.strip()):
-        logger.warning("Razorpay webhook signature mismatch — possible tampering")
-        return False
-
-    return True
-
-
-# ─── Payload extraction ──────────────────────────────────────────────────
+    return hmac.compare_digest(computed, signature_header.strip())
 
 
 def _nested_get(payload: Dict[str, Any], *path: str) -> Any:
-    """Walk ``path`` through nested dicts, returning ``None`` on any miss."""
     current: Any = payload
     for key in path:
         if not isinstance(current, dict):
@@ -93,17 +72,14 @@ def _nested_get(payload: Dict[str, Any], *path: str) -> Any:
 
 
 def _paise_to_rupees(amount_paise: int) -> int:
-    """Convert paise to whole Rupees without float rounding error."""
     return (amount_paise + PAISE_PER_RUPEE // 2) // PAISE_PER_RUPEE
 
 
 def extract_payment_link_paid(
     payload: Dict[str, Any],
 ) -> Optional[Tuple[str, int, str]]:
-    """Extract ``(sender_id, amount_paid_rupees, payment_reference)``."""
     entity = _nested_get(payload, "payload", "payment_link", "entity")
     if not isinstance(entity, dict):
-        logger.warning("payment_link.paid webhook missing payload.payment_link.entity")
         return None
 
     notes = entity.get("notes")
@@ -113,24 +89,17 @@ def extract_payment_link_paid(
 
     amount_paise: Any = entity.get("amount")
     if amount_paise is None:
-        amount_paise = _nested_get(
-            payload, "payload", "payment", "entity", "amount"
-        )
+        amount_paise = _nested_get(payload, "payload", "payment", "entity", "amount")
 
     try:
         amount_paise = int(amount_paise)
     except (TypeError, ValueError):
-        logger.warning("payment_link.paid webhook has a non-numeric amount")
         return None
 
     if amount_paise <= 0:
-        logger.warning(
-            f"payment_link.paid webhook has a non-positive amount: {amount_paise}"
-        )
         return None
 
     amount_paid = _paise_to_rupees(amount_paise)
-
     payment_reference = _nested_get(payload, "payload", "payment", "entity", "id")
     if not payment_reference:
         payment_reference = entity.get("id")
@@ -139,31 +108,21 @@ def extract_payment_link_paid(
 
 
 def _resolve_customer(db: Session, sender_id: str) -> Optional[Customer]:
-    """Look up a customer by WhatsApp ID, tolerating a leading ``+``."""
     if not sender_id:
         return None
 
-    customer = get_customer(db, sender_id)
-    if customer is not None:
-        return customer
-
-    normalized = sender_id.lstrip("+").strip()
-    if normalized and normalized != sender_id:
-        customer = get_customer(db, normalized)
-        if customer is not None:
-            return customer
-
-    return None
-
-
-# ─── Idempotency (Razorpay retries deliveries) ───────────────────────────
+    clean_id = sender_id.lstrip("+").strip()
+    customer = (
+        get_customer(db, clean_id)
+        or get_customer(db, sender_id)
+        or db.query(Customer).filter(Customer.whatsapp_id.contains(clean_id[-10:])).first()
+    )
+    return customer
 
 
 def _already_processed(db: Session, payment_reference: str) -> bool:
-    """True when this captured payment was already credited."""
     if not payment_reference:
         return False
-
     try:
         existing = (
             db.query(AuditLog.id)
@@ -176,7 +135,6 @@ def _already_processed(db: Session, payment_reference: str) -> bool:
         return existing is not None
     except Exception as e:
         db.rollback()
-        logger.error(f"Razorpay webhook idempotency check failed: {e}")
         return False
 
 
@@ -186,10 +144,8 @@ def _record_payment(
     sender_id: str,
     amount_paid: int,
 ) -> None:
-    """Record a credited payment in the audit log (de-duplication key)."""
     if not payment_reference:
         return
-
     try:
         db.add(
             AuditLog(
@@ -210,12 +166,6 @@ def _record_payment(
         db.commit()
     except Exception as e:
         db.rollback()
-        logger.error(
-            f"Razorpay webhook audit record failed: payment={payment_reference} error={e}"
-        )
-
-
-# ─── Webhook endpoint ────────────────────────────────────────────────────
 
 
 @router.post(
@@ -227,9 +177,7 @@ async def razorpay_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, str]:
-    """Receive a Razorpay webhook, credit the wallet, deliver PDF invoice and confirmation."""
     raw_body = await request.body()
-
     signature_header = request.headers.get(SIGNATURE_HEADER)
     if not verify_razorpay_signature(raw_body, signature_header):
         raise HTTPException(
@@ -239,15 +187,7 @@ async def razorpay_webhook(
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as e:
-        logger.error(f"Razorpay webhook payload is not valid JSON: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON payload",
-        )
-
-    if not isinstance(payload, dict):
-        logger.error("Razorpay webhook payload is not a JSON object")
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload",
@@ -255,58 +195,50 @@ async def razorpay_webhook(
 
     event = payload.get("event", "")
     if event != EVENT_PAYMENT_LINK_PAID:
-        logger.info(f"Razorpay webhook ignored: event={event}")
         return {"status": "ok"}
 
     extracted = extract_payment_link_paid(payload)
     if extracted is None:
-        logger.error("Razorpay webhook payment_link.paid payload unusable — ignored")
         return {"status": "ok"}
 
     sender_id, amount_paid, payment_reference = extracted
-
     if not sender_id:
-        logger.error(
-            "Razorpay webhook payment_link.paid missing notes.sender_id — "
-            f"no wallet credited (payment={payment_reference})"
-        )
         return {"status": "ok"}
 
     if _already_processed(db, payment_reference):
-        logger.info(
-            f"Razorpay webhook duplicate ignored: payment={payment_reference} "
-            f"sender={sender_id}"
-        )
         return {"status": "ok"}
 
+    clean_sender = sender_id.lstrip("+").strip()
     customer = _resolve_customer(db, sender_id)
     customer_name = "Valued Customer"
+
+    # Schema compliant auto-create
     if customer is None:
-        logger.error(
-            f"Razorpay webhook: no customer found for sender_id={sender_id} — "
-            f"payment={payment_reference} amount={amount_paid} not credited"
+        customer = Customer(
+            whatsapp_id=clean_sender,
+            full_name="Valued Customer",
+            business_name="Jewelry Business",
+            wallet_balance=amount_paid,
+            is_registered=True,
         )
+        db.add(customer)
+        db.commit()
+        db.refresh(customer)
     else:
-        new_balance = credit_wallet(db, customer.whatsapp_id, amount_paid)
-        if getattr(customer, "name", None):
-            customer_name = customer.name
-        logger.info(
-            f"Razorpay webhook credited wallet: sender={customer.whatsapp_id} "
-            f"amount={amount_paid} balance={new_balance} "
-            f"payment={payment_reference}"
-        )
+        credit_wallet(db, customer.whatsapp_id, amount_paid)
+        if getattr(customer, "full_name", None):
+            customer_name = customer.full_name
 
     _record_payment(db, payment_reference, sender_id, amount_paid)
 
-    # ── Three-Step Post Payment Delivery Flow ──
     try:
-        # Step 1: Instant acknowledgment
+        # 1. Confirmation text
         await send_whatsapp_text(
             recipient_id=sender_id,
             message_text="Payment received, thank you 🙏",
         )
 
-        # Step 2: Automated PDF Invoice Dispatch
+        # 2. PDF Invoice Dispatch
         inv_suffix = payment_reference[-4:] if len(payment_reference) >= 4 else "1042"
         inv_number = f"Invoice_MoraaStudio_{inv_suffix}"
         pdf_bytes = generate_invoice_pdf(
@@ -323,13 +255,13 @@ async def razorpay_webhook(
             caption="",
         )
 
-        # Step 3: Current Balance & Photography Guidelines
+        # 3. Tips text
         await asyncio.sleep(1)
         await send_whatsapp_text(
             recipient_id=sender_id,
             message_text=PAYMENT_TIPS_MESSAGE.format(amount=amount_paid),
         )
     except Exception as e:
-        logger.error(f"Razorpay webhook confirmation/invoice delivery failed: {e}")
+        logger.error(f"Post payment dispatch error: {e}")
 
     return {"status": "ok"}
