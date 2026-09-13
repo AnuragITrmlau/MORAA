@@ -1,4 +1,4 @@
-"""Amazon India — Fashion Jewellery Earrings Main/Product Image Presentation.
+"feat(whatsapp): add onboarding flow, greeting handler and direct text messaging""""Amazon India — Fashion Jewellery Earrings Main/Product Image Presentation.
 
 Defines presentation-only instructions for the Amazon India marketplace's
 main product image for fashion jewellery earrings.

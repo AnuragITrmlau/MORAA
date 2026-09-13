@@ -22,30 +22,36 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 class TestGenerationIdempotency(unittest.TestCase):
     """Verify that duplicate generation triggers are blocked."""
 
+    def _guard_line(self, source: str) -> str:
+        """Extract the status-guard line from process_whatsapp_generation source."""
+        return next(
+            line for line in source.splitlines()
+            if "ingestion.status ==" in line
+        )
+
     def test_status_guard_blocks_processing(self):
-        """process_whatsapp_generation skips if status is 'processing'."""
+        """process_whatsapp_generation skips only while status is 'processing'."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        # The guard must check status not in ("stored", "failed")
-        self.assertIn('"stored"', source)
-        self.assertIn('"failed"', source)
-        self.assertIn("not in", source)
+        guard = self._guard_line(source)
+        self.assertIn('"processing"', guard)
 
-    def test_status_guard_blocks_delivered(self):
-        """process_whatsapp_generation skips if status is 'delivered'."""
+    def test_status_guard_allows_rerun_from_delivered(self):
+        """'delivered' is not blocked — a new style can be re-selected for the same image."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        # "delivered" is NOT in the allowed set, so it's blocked
-        self.assertNotIn('"delivered"', source.split("not in")[1].split("):")[0])
+        guard = self._guard_line(source)
+        self.assertNotIn('"delivered"', guard)
 
-    def test_status_guard_blocks_generated(self):
-        """process_whatsapp_generation skips if status is 'generated'."""
+    def test_status_guard_allows_rerun_from_generated(self):
+        """'generated' is not blocked — a new style can be re-selected for the same image."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        self.assertNotIn('"generated"', source.split("not in")[1].split("):")[0])
+        guard = self._guard_line(source)
+        self.assertNotIn('"generated"', guard)
 
 
 # ─── STEP 6: Delivery Idempotency Audit ─────────────────────────────────
@@ -62,13 +68,16 @@ class TestDeliveryIdempotency(unittest.TestCase):
         self.assertIn('"failed"', source)
         self.assertIn('"delivery_failed"', source)
 
-    def test_process_generation_blocks_delivered(self):
-        """process_whatsapp_generation blocks already-delivered ingestions."""
+    def test_process_generation_allows_rerun_from_delivered(self):
+        """process_whatsapp_generation re-runs from 'delivered' for a new style selection."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        self.assertIn('"stored"', source)
-        self.assertIn('"failed"', source)
+        guard = next(
+            line for line in source.splitlines()
+            if "ingestion.status ==" in line
+        )
+        self.assertNotIn('"delivered"', guard)
 
 
 # ─── STEP 7: Retry Safety Audit ─────────────────────────────────────────
@@ -240,12 +249,12 @@ class TestFailureMatrix(unittest.TestCase):
         self.assertEqual(mock_ingestion.status, "delivery_failed")
 
     def test_duplicate_generation_trigger_blocked(self):
-        """process_whatsapp_generation blocks non-stored/non-failed status."""
+        """process_whatsapp_generation blocks only in-flight ('processing') triggers."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        self.assertIn('"stored"', source)
-        self.assertIn('"failed"', source)
+        self.assertIn("ingestion.status ==", source)
+        self.assertIn('"processing"', source)
 
 
 # ─── STEP 16: Critical File Integrity ───────────────────────────────────
@@ -255,8 +264,10 @@ class TestCriticalFileIntegrity(unittest.TestCase):
     """Verify all critical files remain unchanged by Part 4."""
 
     EXPECTED_HASHES = {
-        "app/services/earring_ecommerce_prompt.py": "982b16df3b781615",
-        "app/services/earring_close_up_ears_prompt.py": "bf2d6720c2c6d0f6",
+        # Re-baselined 2026-09-09: 1:1 visual-preservation lock + input-
+        # extraction directives added to both prompt builders (approved change).
+        "app/services/earring_ecommerce_prompt.py": "95de5d770648bc09",
+        "app/services/earring_close_up_ears_prompt.py": "4a98997478adcbbc",
         "app/services/earring_scale_reference_prompt.py": "01c41ce7fa1e396e",
         "app/services/earring_professional_shot_prompt.py": "cec5cbe19b37a4d2",
         "app/ai/product_fidelity.py": "4fc1dc8f9167bfc9",

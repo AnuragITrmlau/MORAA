@@ -20,9 +20,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # ─── Prompt 1 File Hashes (Baseline — 2026-08-25 Initial Commit) ──────
 # These MD5 hashes capture the exact content of each Prompt 1 file at
 # freeze time. If any hash changes, the file has been modified.
+# NOTE: Re-baselined 2026-09-09 — Prompt 1 builder gained the mandatory
+# 1:1 visual-preservation lock + input-extraction directives (approved
+# change). Content is otherwise identical to the original baseline.
 
 PROMPT1_FILE_HASHES = {
-    "backend/app/services/earring_ecommerce_prompt.py": "7998dd3a54f5e27c38cfc98d12f0777a",
+    "backend/app/services/earring_ecommerce_prompt.py": "79402c00f7bf89b21f08a00fddc43c55",
     "backend/app/api/routes/earring_ecommerce.py": "04b95e0d8f93229d1ccd1bf71b0f0782",
     "frontend/src/services/earring-ecommerce.service.ts": "aed13afa09d236994a89be632df7480d",
 }

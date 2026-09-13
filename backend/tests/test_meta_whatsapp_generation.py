@@ -80,20 +80,21 @@ class TestDataUrlConversion(unittest.TestCase):
 class TestProcessWhatsappGeneration(unittest.TestCase):
     """Verify the core generation trigger function reuses existing components."""
 
-    def test_generation_calls_existing_prompt_builder(self):
-        """process_whatsapp_generation calls build_earring_ecommerce_prompt — the SAME Prompt 1 builder."""
+    def test_generation_calls_existing_prompt_builders(self):
+        """process_whatsapp_generation routes to the correct prompt builder
+        based on prompt_type: prompt_ecommerce, prompt_close_up, or prompt_ugc."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
 
-        # Verify the function imports and references the exact same Prompt 1 builder
+        # Verify the function imports all three prompt builders used in the interactive flow
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
         self.assertIn("build_earring_ecommerce_prompt", source)
-        # Verify it does NOT import or call any other prompt builder
-        self.assertNotIn("build_close_up_ears_prompt", source)
+        self.assertIn("build_close_up_ears_prompt", source)
+        self.assertIn("build_ugc_style_prompt", source)
+        # Verify it still does NOT import unrelated prompt builders
         self.assertNotIn("build_scale_reference_prompt", source)
         self.assertNotIn("build_professional_shot_prompt", source)
         self.assertNotIn("build_complementary_shot_prompt", source)
-        self.assertNotIn("build_ugc_style_prompt", source)
         self.assertNotIn("build_macro_shot_prompt", source)
 
     def test_generation_calls_existing_manager(self):
@@ -121,14 +122,17 @@ class TestProcessWhatsappGeneration(unittest.TestCase):
         self.assertIn("Image", source)
 
     def test_idempotency_blocks_duplicate_processing(self):
-        """process_whatsapp_generation skips if status is not 'stored' or 'failed'."""
+        """process_whatsapp_generation skips only while status is 'processing' (in-flight).
+
+        Terminal/awaiting states (stored, failed, awaiting_selection, generated,
+        delivered) are allowed to re-run so a new style can be selected for the
+        same image."""
         from app.services.meta_whatsapp_service import process_whatsapp_generation
 
         import inspect
         source = inspect.getsource(process_whatsapp_generation)
-        self.assertIn("not in", source)
-        self.assertIn('"stored"', source)
-        self.assertIn('"failed"', source)
+        self.assertIn("ingestion.status ==", source)
+        self.assertIn('"processing"', source)
 
     def test_status_lifecycle_tracked(self):
         """process_whatsapp_generation updates status through the lifecycle."""

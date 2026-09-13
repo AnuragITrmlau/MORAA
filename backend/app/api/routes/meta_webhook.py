@@ -5,6 +5,7 @@ endpoints. Ingests incoming WhatsApp images and forwards to AI generation.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
+import asyncio
 import json
 import traceback
 import httpx
@@ -23,6 +24,8 @@ from app.services.meta_whatsapp_service import (
     parse_webhook_entry,
     process_whatsapp_generation,
     send_prompt_selection_buttons,
+    send_whatsapp_cta_url_button,
+    send_whatsapp_text,
     validate_image,
     verify_webhook_signature,
 )
@@ -31,41 +34,16 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
+# Default recharge payment link (Update with your live Razorpay / payment link)
+DEFAULT_PAYMENT_URL = "https://rzp.io/l/moraa-recharge"
+
 
 # ─── Direct WhatsApp Message Sender Helper ──────────────────────────────
 
 
 async def send_direct_whatsapp_text(recipient_id: str, message_text: str) -> bool:
-    """Sends a direct WhatsApp text message using Meta Cloud API.
-    Bypasses broken local service wrappers to guarantee message delivery.
-    """
-    url = f"https://graph.facebook.com/v21.0/{settings.META_PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": recipient_id,
-        "type": "text",
-        "text": {"preview_url": False, "body": message_text},
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code in (200, 201):
-                logger.info(f"Direct WhatsApp message delivered to {recipient_id}")
-                return True
-            else:
-                logger.error(
-                    f"Meta API rejected message to {recipient_id}: status={resp.status_code} body={resp.text}"
-                )
-                return False
-    except Exception as e:
-        logger.error(f"Network error delivering message to {recipient_id}: {e}")
-        return False
+    """Sends a direct WhatsApp text message using Meta Cloud API."""
+    return await send_whatsapp_text(recipient_id, message_text)
 
 
 # ─── Background generation trigger ──────────────────────────────────────
@@ -217,18 +195,20 @@ async def receive_webhook(
             if event_type == "status":
                 continue
 
-            # ── Text messages (Scenario 1: Guaranteed Onboarding Flow) ──
+            # ── Text messages (Scenario 1: Welcome & Registration) ────
             if event_type == "text":
                 sender = event.get("sender", "")
                 raw_text = event.get("body", "").strip()
                 lower_text = raw_text.lower()
                 logger.info(f"Text message received: sender={sender} text='{raw_text}'")
 
-                # Check 1: Greeting triggers Welcome & Template
+                # Check 1: Greeting triggers two sequential bubbles
                 if any(greet in lower_text for greet in ["hi", "hii", "hello", "hey", "start"]):
-                    welcome_msg = (
+                    msg_part_1 = (
                         "Hi there! Welcome to Moraa Studio ✨\n"
-                        "We help you turn raw jewelry photos into polished, e-commerce ready images — powered by AI 💎\n"
+                        "We help you turn raw jewelry photos into polished, e-commerce ready images — powered by AI 💎"
+                    )
+                    msg_part_2 = (
                         "Let’s get you set up, it only takes a minute!\n\n"
                         "Quick registration 📋\n"
                         "Copy this, fill in your details and send it right back:\n\n"
@@ -237,25 +217,50 @@ async def receive_webhook(
                         "GST number:\n"
                         "Business address:"
                     )
-                    delivered = await send_direct_whatsapp_text(sender, welcome_msg)
-                    if delivered:
+
+                    ok_1 = await send_whatsapp_text(sender, msg_part_1)
+                    await asyncio.sleep(1)
+                    ok_2 = await send_whatsapp_text(sender, msg_part_2)
+
+                    if ok_1 or ok_2:
                         onboarding_handled_count += 1
                     continue
 
-                # Check 2: Filled Registration Details Received
+                # Check 2: Filled Registration Details Received -> Confirm + Payment CTA
                 if "name:" in lower_text and "business" in lower_text:
+                    user_name = "there"
+                    for line in raw_text.splitlines():
+                        if line.lower().startswith("name:"):
+                            extracted = line.split(":", 1)[1].strip()
+                            if extracted:
+                                user_name = extracted.split()[0]
+                            break
+
                     confirm_msg = (
-                        "Congratulations! You’re registered with Moraa Studio 🎉\n"
-                        "You’re all set to start creating stunning product photos.\n\n"
-                        "Current balance: ₹0 ⚠️\n"
-                        "Please recharge your wallet or send your photo to begin!"
+                        f"Congratulations {user_name}! You’re registered with Moraa Studio 🎉\n"
+                        f"You’re all set to start creating stunning product photos."
                     )
-                    delivered = await send_direct_whatsapp_text(sender, confirm_msg)
-                    if delivered:
-                        onboarding_handled_count += 1
+
+                    # Send CTA URL button for recharging (Scenario 1)
+                    cta_sent = await send_whatsapp_cta_url_button(
+                        recipient_id=sender,
+                        body_text=confirm_msg,
+                        button_label="Recharge to use",
+                        url=DEFAULT_PAYMENT_URL,
+                    )
+
+                    # Fallback to plain text if CTA fails
+                    if not cta_sent:
+                        fallback_msg = (
+                            f"{confirm_msg}\n\n"
+                            f"Current balance: ₹0 ⚠️\n"
+                            f"Recharge ₹500 to get started: {DEFAULT_PAYMENT_URL}"
+                        )
+                        await send_whatsapp_text(sender, fallback_msg)
+
+                    onboarding_handled_count += 1
                     continue
 
-                # Unhandled text messages
                 continue
 
             # ── Interactive button replies ─────────────────────────────
@@ -289,6 +294,28 @@ async def receive_webhook(
             mime_type = event.get("mime_type", "")
             caption = event.get("caption", "")
             timestamp = event.get("timestamp", "")
+
+            # ── Scenario 2: Zero Balance Wallet Gate (Configurable) ───
+            # Set ENABLE_WALLET_GATE=True in .env to enforce payment before generation
+            wallet_gate_active = getattr(settings, "ENABLE_WALLET_GATE", False)
+            if wallet_gate_active:
+                zero_balance_msg = (
+                    "Your current balance is ₹0 ⚠️\n"
+                    "Please make a payment to continue."
+                )
+                sent_gate = await send_whatsapp_cta_url_button(
+                    recipient_id=sender,
+                    body_text=zero_balance_msg,
+                    button_label="Pay ₹500",
+                    url=DEFAULT_PAYMENT_URL,
+                )
+                if not sent_gate:
+                    await send_whatsapp_text(
+                        sender,
+                        f"{zero_balance_msg}\n\nPay ₹500 here: {DEFAULT_PAYMENT_URL}",
+                    )
+                logger.info(f"Wallet gate held image for user={sender} (balance=0)")
+                continue
 
             # Idempotency check
             try:
