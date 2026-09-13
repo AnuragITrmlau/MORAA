@@ -273,13 +273,7 @@ def verify_webhook_signature(
 
 
 async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) -> bool:
-    """Send an interactive button message to the user asking them to select a style.
-
-    Button layout:
-        Button 1: "Clean E-Commerce" (ID: "prompt_ecommerce:<ingestion_id>")
-        Button 2: "Close-up on Ear" (ID: "prompt_close_up:<ingestion_id>")
-        Button 3: "UGC Lifestyle"     (ID: "prompt_ugc:<ingestion_id>")
-    """
+    """Send an interactive button message to the user asking them to select a style."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error("META_WHATSAPP_TOKEN not configured — cannot send button message")
         return False
@@ -348,9 +342,7 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Meta send button message failed: status={response.status_code}"
-                )
+                logger.error(f"Meta send button message failed: status={response.status_code}")
                 return False
 
             data = response.json()
@@ -375,12 +367,7 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
 
 
 async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
-    """Send post-generation interactive feedback buttons.
-
-    Buttons:
-        Button 1: "😍 Yes, this is good" (ID: "feedback_positive:<ingestion_id>")
-        Button 2: "🤕 I didn't like it"   (ID: "feedback_negative:<ingestion_id>")
-    """
+    """Send post-generation interactive feedback buttons."""
     if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
         logger.error("Meta credentials not configured — cannot send feedback buttons")
         return False
@@ -450,9 +437,7 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
         logger.error(f"META_PHONE_NUMBER_ID not configured — cannot send {label}")
         return False
 
-    url = META_SEND_MESSAGE_URL.format(
-        phone_number_id=settings.META_PHONE_NUMBER_ID
-    )
+    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -466,9 +451,7 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Meta send {label} failed: status={response.status_code}"
-                )
+                logger.error(f"Meta send {label} failed: status={response.status_code}")
                 return False
 
             data = response.json()
@@ -504,9 +487,7 @@ async def send_whatsapp_cta_url_button(
 ) -> bool:
     """Send an interactive CTA-URL button."""
     if not recipient_id or not body_text:
-        logger.warning(
-            "send_whatsapp_cta_url_button called without recipient/body — skipped"
-        )
+        logger.warning("send_whatsapp_cta_url_button called without recipient/body — skipped")
         return False
 
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
@@ -572,9 +553,7 @@ async def send_interactive_cta_button(
 ) -> bool:
     """Send an interactive single-button (CTA) message."""
     if not recipient_id or not button_id or not button_title:
-        logger.warning(
-            "send_interactive_cta_button called without recipient/button — skipped"
-        )
+        logger.warning("send_interactive_cta_button called without recipient/button — skipped")
         return False
 
     payload = {
@@ -827,9 +806,7 @@ async def upload_media_to_meta(
         logger.error("META_PHONE_NUMBER_ID not configured — cannot upload media")
         return None
 
-    url = META_MEDIA_UPLOAD_URL.format(
-        phone_number_id=settings.META_PHONE_NUMBER_ID
-    )
+    url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -848,9 +825,7 @@ async def upload_media_to_meta(
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Meta media upload failed: status={response.status_code}"
-                )
+                logger.error(f"Meta media upload failed: status={response.status_code}")
                 return None
 
             data = response.json()
@@ -886,9 +861,7 @@ async def send_image_to_whatsapp(
         logger.error("META_PHONE_NUMBER_ID not configured — cannot send message")
         return False
 
-    url = META_SEND_MESSAGE_URL.format(
-        phone_number_id=settings.META_PHONE_NUMBER_ID
-    )
+    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
 
     payload = {
         "messaging_product": "whatsapp",
@@ -912,9 +885,7 @@ async def send_image_to_whatsapp(
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Meta send message failed: status={response.status_code}"
-                )
+                logger.error(f"Meta send message failed: status={response.status_code}")
                 return False
 
             data = response.json()
@@ -934,4 +905,52 @@ async def send_image_to_whatsapp(
         return False
     except Exception as e:
         logger.error(f"Meta send message failed: {e}")
+        return False
+
+
+async def send_document_to_whatsapp(
+    recipient_id: str,
+    document_bytes: bytes,
+    filename: str = "invoice.pdf",
+    caption: str = "",
+) -> bool:
+    """Upload and deliver a PDF document to WhatsApp via Meta Cloud API."""
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials not configured for document upload")
+        return False
+
+    upload_url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+    msg_url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # 1. Upload Document
+            files = {"file": (filename, document_bytes, "application/pdf")}
+            data = {"messaging_product": "whatsapp", "type": "application/pdf"}
+            headers = {"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"}
+
+            upload_resp = await client.post(upload_url, headers=headers, files=files, data=data)
+            if upload_resp.status_code != 200:
+                logger.error(f"Failed to upload invoice document: {upload_resp.text}")
+                return False
+
+            media_id = upload_resp.json().get("id")
+
+            # 2. Send Document Message
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": recipient_id,
+                "type": "document",
+                "document": {
+                    "id": media_id,
+                    "filename": filename,
+                    "caption": caption,
+                },
+            }
+            send_resp = await client.post(msg_url, headers=headers, json=payload)
+            return send_resp.status_code in (200, 201)
+
+    except Exception as e:
+        logger.error(f"Exception sending document to WhatsApp: {e}")
         return False

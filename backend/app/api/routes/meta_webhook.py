@@ -1,7 +1,8 @@
 """Meta WhatsApp Cloud API webhook routes.
 
 Implements the official WhatsApp webhook verification and event reception
-endpoints. Ingests incoming WhatsApp images and forwards to AI generation.
+endpoints. Ingests incoming WhatsApp images, validates via AI Quality Guard,
+and forwards to AI generation.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,6 +19,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.whatsapp_ingestion import WhatsAppIngestion
 from app.repositories.base import BaseRepository
+from app.services.image_quality_guard import validate_jewelry_image_with_gemini
 from app.services.meta_whatsapp_service import (
     download_media,
     get_media_url,
@@ -288,7 +290,7 @@ async def receive_webhook(
                         fb_response = "Thank you so much for the love! Glad you liked it 🎉 Send your next photo anytime!"
                     else:
                         fb_response = "Thanks for letting us know! We’re constantly training our model. You can retry with another angle or lighting 📸"
-                    
+
                     await send_whatsapp_text(recipient_id=sender, message_text=fb_response)
                     continue
 
@@ -310,7 +312,7 @@ async def receive_webhook(
             if event_type in ("interactive", "unsupported"):
                 continue
 
-            # ── Image messages ──
+            # ── Image messages (Supports Single & Multi-photo Upload batches) ──
             if event_type != "image":
                 continue
 
@@ -342,7 +344,7 @@ async def receive_webhook(
                 logger.info(f"Wallet gate held image for user={sender} (balance=0)")
                 continue
 
-            # Idempotency check
+            # Idempotency check per message
             try:
                 existing = ingestion_repo.find_first(external_message_id=message_id)
                 if existing:
@@ -375,10 +377,27 @@ async def receive_webhook(
 
             image_bytes, content_type = download_result
 
+            # 1. Local MIME & Size Validation
             is_valid, error_msg = validate_image(image_bytes, content_type)
             if not is_valid:
                 continue
 
+            # 2. AI Quality Guard (Gemini Pre-validation)
+            ai_valid, tip_msg = await validate_jewelry_image_with_gemini(
+                image_bytes=image_bytes,
+                mime_type=content_type,
+            )
+            if not ai_valid:
+                reject_text = (
+                    "Photo quality check ⚠️\n\n"
+                    f"{tip_msg}\n\n"
+                    "Please snap a new photo and upload again!"
+                )
+                await send_whatsapp_text(sender, reject_text)
+                logger.info(f"AI Quality Guard rejected photo from {sender}")
+                continue
+
+            # 3. Store and Dispatch Style Options for Valid Photo
             try:
                 ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
                 ext = ext_map.get(content_type, "jpg")

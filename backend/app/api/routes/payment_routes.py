@@ -3,41 +3,9 @@
 This module is ADDITIVE: it wires Razorpay's asynchronous ``payment_link.paid``
 webhook to the existing Moraa Studio wallet. No existing ingestion, media
 download or Gemini generation handler is touched.
-
-Request flow implemented here:
-
-    1. Read the RAW request body first. Signature verification must run on the
-       exact bytes Razorpay signed — re-serialising parsed JSON changes key
-       ordering/spacing and would invalidate a perfectly good signature.
-    2. Verify the ``X-Razorpay-Signature`` header with HMAC-SHA256 using
-       ``settings.RAZORPAY_WEBHOOK_SECRET``. A mismatch is a hard HTTP 400 and
-       no wallet is ever credited. When the secret is not configured the
-       endpoint fails CLOSED (HTTP 400) rather than accepting unsigned calls.
-    3. On ``payment_link.paid``:
-         * resolve the WhatsApp ``sender_id`` from
-           ``payload.payment_link.entity.notes.sender_id``
-         * convert the paise amount to whole Indian Rupees (integer maths only)
-         * credit the customer's ``wallet_balance`` through the shared
-           ``wallet_service`` helpers (single source of money arithmetic)
-         * send the official Moraa Studio payment-confirmation message over
-           WhatsApp via ``meta_whatsapp_service.send_whatsapp_text``
-
-    Every other event type is acknowledged with ``{"status": "ok"}`` and
-    ignored, so Razorpay does not retry events this service does not handle.
-
-Reliability notes:
-
-    * Razorpay retries webhooks, so a captured payment is recorded once in the
-      existing ``audit_logs`` table (``action='razorpay_payment_captured'``,
-      ``resource_id=<payment id>``) and a duplicate delivery is a no-op.
-      The guard is deliberately fail-OPEN: if the idempotency lookup itself
-      errors, the payment is still processed so a real recharge can never be
-      silently dropped.
-    * Message delivery failures never fail the webhook — the money has already
-      been credited and Razorpay must not be told to retry. Failures are
-      logged for operations.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -50,7 +18,11 @@ from app.config import settings
 from app.database import get_db
 from app.models.audit_log import AuditLog
 from app.models.customer import Customer
-from app.services.meta_whatsapp_service import send_whatsapp_text
+from app.services.invoice_service import generate_invoice_pdf
+from app.services.meta_whatsapp_service import (
+    send_document_to_whatsapp,
+    send_whatsapp_text,
+)
 from app.services.wallet_service import credit_wallet, get_customer
 from app.utils.logger import logger
 
@@ -58,23 +30,14 @@ router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
 # ─── Constants ───────────────────────────────────────────────────────────
 
-#: Header Razorpay signs the raw body with.
 SIGNATURE_HEADER = "X-Razorpay-Signature"
-
-#: The only event this router acts on.
 EVENT_PAYMENT_LINK_PAID = "payment_link.paid"
-
-#: Razorpay amounts are always in the minor unit — paise for INR.
 PAISE_PER_RUPEE = 100
 
-#: Audit identifiers used to record (and de-duplicate) a captured payment.
 AUDIT_ACTION_PAYMENT_CAPTURED = "razorpay_payment_captured"
 AUDIT_RESOURCE_TYPE = "razorpay_payment"
 
-#: Official Moraa Studio payment confirmation message. ``{amount}`` is
-#: substituted with the captured amount in whole Rupees.
-PAYMENT_CONFIRMATION_MESSAGE = (
-    "Payment received, thank you 🙏\n\n"
+PAYMENT_TIPS_MESSAGE = (
     "Current balance: ₹{amount} 💰\n\n"
     "You’re ready to go! For the best results:\n"
     "📸 Shoot in a well-lit space\n"
@@ -89,21 +52,7 @@ PAYMENT_CONFIRMATION_MESSAGE = (
 
 
 def verify_razorpay_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
-    """Verify Razorpay's HMAC-SHA256 ``X-Razorpay-Signature`` header.
-
-    Razorpay signs the raw request body with the webhook secret and sends the
-    lowercase hex digest with no prefix. The comparison uses
-    ``hmac.compare_digest`` so it is timing-safe.
-
-    Args:
-        raw_body: The exact bytes received in the request body.
-        signature_header: Value of the ``X-Razorpay-Signature`` header.
-
-    Returns:
-        ``True`` only when a configured secret produced the supplied digest.
-        Missing configuration, a missing header and a mismatch all return
-        ``False`` (fail-closed).
-    """
+    """Verify Razorpay's HMAC-SHA256 ``X-Razorpay-Signature`` header."""
     secret = (settings.RAZORPAY_WEBHOOK_SECRET or "").strip()
     if not secret:
         logger.error(
@@ -151,13 +100,7 @@ def _paise_to_rupees(amount_paise: int) -> int:
 def extract_payment_link_paid(
     payload: Dict[str, Any],
 ) -> Optional[Tuple[str, int, str]]:
-    """Extract ``(sender_id, amount_paid_rupees, payment_reference)``.
-
-    Reads ``payload.payment_link.entity.notes.sender_id`` and the link amount
-    (falling back to the captured payment's amount when the link entity does
-    not carry one). Returns ``None`` when the payload cannot be used, so the
-    caller can acknowledge it without retrying forever.
-    """
+    """Extract ``(sender_id, amount_paid_rupees, payment_reference)``."""
     entity = _nested_get(payload, "payload", "payment_link", "entity")
     if not isinstance(entity, dict):
         logger.warning("payment_link.paid webhook missing payload.payment_link.entity")
@@ -217,11 +160,7 @@ def _resolve_customer(db: Session, sender_id: str) -> Optional[Customer]:
 
 
 def _already_processed(db: Session, payment_reference: str) -> bool:
-    """True when this captured payment was already credited.
-
-    Fail-OPEN: any lookup error returns ``False`` so the payment is still
-    processed rather than silently dropped.
-    """
+    """True when this captured payment was already credited."""
     if not payment_reference:
         return False
 
@@ -288,13 +227,7 @@ async def razorpay_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, str]:
-    """Receive a Razorpay webhook, credit the wallet and confirm on WhatsApp.
-
-    Always answers HTTP 400 when the signature cannot be verified. Every
-    verifiable request is acknowledged with ``{"status": "ok"}`` so Razorpay
-    stops retrying; business-level problems are logged, never surfaced as a
-    5xx (which would trigger a retry of an already-applied credit).
-    """
+    """Receive a Razorpay webhook, credit the wallet, deliver PDF invoice and confirmation."""
     raw_body = await request.body()
 
     signature_header = request.headers.get(SIGNATURE_HEADER)
@@ -347,6 +280,7 @@ async def razorpay_webhook(
         return {"status": "ok"}
 
     customer = _resolve_customer(db, sender_id)
+    customer_name = "Valued Customer"
     if customer is None:
         logger.error(
             f"Razorpay webhook: no customer found for sender_id={sender_id} — "
@@ -354,6 +288,8 @@ async def razorpay_webhook(
         )
     else:
         new_balance = credit_wallet(db, customer.whatsapp_id, amount_paid)
+        if getattr(customer, "name", None):
+            customer_name = customer.name
         logger.info(
             f"Razorpay webhook credited wallet: sender={customer.whatsapp_id} "
             f"amount={amount_paid} balance={new_balance} "
@@ -362,14 +298,38 @@ async def razorpay_webhook(
 
     _record_payment(db, payment_reference, sender_id, amount_paid)
 
+    # ── Three-Step Post Payment Delivery Flow ──
     try:
+        # Step 1: Instant acknowledgment
         await send_whatsapp_text(
             recipient_id=sender_id,
-            message_text=PAYMENT_CONFIRMATION_MESSAGE.format(amount=amount_paid),
+            message_text="Payment received, thank you 🙏",
+        )
+
+        # Step 2: Automated PDF Invoice Dispatch
+        inv_suffix = payment_reference[-4:] if len(payment_reference) >= 4 else "1042"
+        inv_number = f"Invoice_MoraaStudio_{inv_suffix}"
+        pdf_bytes = generate_invoice_pdf(
+            customer_name=customer_name,
+            invoice_number=inv_number,
+            amount=amount_paid,
+        )
+
+        await asyncio.sleep(1)
+        await send_document_to_whatsapp(
+            recipient_id=sender_id,
+            document_bytes=pdf_bytes,
+            filename=f"{inv_number}.pdf",
+            caption="",
+        )
+
+        # Step 3: Current Balance & Photography Guidelines
+        await asyncio.sleep(1)
+        await send_whatsapp_text(
+            recipient_id=sender_id,
+            message_text=PAYMENT_TIPS_MESSAGE.format(amount=amount_paid),
         )
     except Exception as e:
-        # The money is already credited — never fail the webhook over a
-        # message that can be resent from the operations side.
-        logger.error(f"Razorpay webhook confirmation message failed: {e}")
+        logger.error(f"Razorpay webhook confirmation/invoice delivery failed: {e}")
 
     return {"status": "ok"}
