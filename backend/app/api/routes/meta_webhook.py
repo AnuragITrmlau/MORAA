@@ -2,7 +2,7 @@
 
 Implements the official WhatsApp webhook verification and event reception
 endpoints. Ingests incoming WhatsApp images, validates via AI Quality Guard,
-and forwards to AI generation.
+enforces Scenario 2 zero-balance wallet gating, and forwards to AI generation.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.models.customer import Customer
 from app.models.whatsapp_ingestion import WhatsAppIngestion
 from app.repositories.base import BaseRepository
 from app.services.image_quality_guard import validate_jewelry_image_with_gemini
@@ -33,6 +34,7 @@ from app.services.meta_whatsapp_service import (
 )
 from app.services.razorpay_service import create_recharge_payment_link
 from app.services.upload_service import UploadService
+from app.services.wallet_service import get_customer
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
@@ -324,25 +326,46 @@ async def receive_webhook(
             caption = event.get("caption", "")
             timestamp = event.get("timestamp", "")
 
+            # ── Scenario 2: Zero Balance Wallet Gate ──
             wallet_gate_active = getattr(settings, "ENABLE_WALLET_GATE", False)
             if wallet_gate_active:
-                zero_balance_msg = (
-                    "Your current balance is ₹0 ⚠️\n"
-                    "Please make a payment to continue."
-                )
-                sent_gate = await send_whatsapp_cta_url_button(
-                    recipient_id=sender,
-                    body_text=zero_balance_msg,
-                    button_label="Pay ₹500",
-                    url=DEFAULT_PAYMENT_URL,
-                )
-                if not sent_gate:
-                    await send_whatsapp_text(
-                        sender,
-                        f"{zero_balance_msg}\n\nPay ₹500 here: {DEFAULT_PAYMENT_URL}",
+                customer = get_customer(db, sender) or get_customer(db, sender.lstrip("+"))
+                current_balance = customer.wallet_balance if customer else 0
+
+                if current_balance <= 0:
+                    try:
+                        customer_name = customer.name if customer and customer.name else "Customer"
+                        pay_url = await create_recharge_payment_link(
+                            customer_phone=sender,
+                            customer_name=customer_name,
+                            amount=500,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error creating gate recharge link for {sender}: {e}")
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    if not pay_url:
+                        pay_url = DEFAULT_PAYMENT_URL
+
+                    zero_balance_msg = (
+                        "Your current balance is ₹0 ⚠️\n"
+                        "Please make a payment to continue."
                     )
-                logger.info(f"Wallet gate held image for user={sender} (balance=0)")
-                continue
+                    
+                    # Exact CTA Button from Journey UI
+                    sent_gate = await send_whatsapp_cta_url_button(
+                        recipient_id=sender,
+                        body_text=zero_balance_msg,
+                        button_label="Pay ₹500",
+                        url=pay_url,
+                    )
+                    if not sent_gate:
+                        await send_whatsapp_text(
+                            sender,
+                            f"{zero_balance_msg}\n\nPay ₹500 here: {pay_url}",
+                        )
+                    logger.info(f"Wallet gate held image for user={sender} (balance={current_balance})")
+                    continue
 
             # Idempotency check per message
             try:
