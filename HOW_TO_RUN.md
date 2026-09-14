@@ -146,7 +146,7 @@ HOST=0.0.0.0
 PORT=8000
 
 # ─── Database (SQLite for development — no external DB needed)
-DATABASE_URL=sqlite:///./data/moraa_gemvision.db
+DATABASE_URL=postgresql://postgres.vusbefwoaliozkvrqacq:[YOUR-PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
 # For PostgreSQL in production:
 # DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/moraa_gemvision
 
