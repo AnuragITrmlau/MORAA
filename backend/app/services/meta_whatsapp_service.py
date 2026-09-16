@@ -365,6 +365,10 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
 
 async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
     """Send post-generation interactive feedback buttons."""
+    # TEMPORARILY DISABLED: outgoing feedback message is suppressed for now.
+    # Re-enable by removing this early return.
+    return True
+
     if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
         logger.error("Meta credentials not configured — cannot send feedback buttons")
         return False
