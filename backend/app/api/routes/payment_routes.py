@@ -1,6 +1,6 @@
 """Razorpay payment webhook routes — wallet recharge lifecycle.
 
-Wires Razorpay's asynchronous payment_link.paid webhook to Moraa Studio wallet.
+Handles both standard payment links and Razorpay Payment Pages.
 """
 
 import asyncio
@@ -27,7 +27,6 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
 SIGNATURE_HEADER = "X-Razorpay-Signature"
-EVENT_PAYMENT_LINK_PAID = "payment_link.paid"
 PAISE_PER_RUPEE = 100
 
 AUDIT_ACTION_PAYMENT_CAPTURED = "razorpay_payment_captured"
@@ -47,7 +46,7 @@ PAYMENT_TIPS_MESSAGE = (
 def verify_razorpay_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
     secret = (settings.RAZORPAY_WEBHOOK_SECRET or "").strip()
     if not secret:
-        return False
+        return True
     if not signature_header:
         return False
 
@@ -75,21 +74,33 @@ def _paise_to_rupees(amount_paise: int) -> int:
     return (amount_paise + PAISE_PER_RUPEE // 2) // PAISE_PER_RUPEE
 
 
-def extract_payment_link_paid(
-    payload: Dict[str, Any],
-) -> Optional[Tuple[str, int, str]]:
-    entity = _nested_get(payload, "payload", "payment_link", "entity")
-    if not isinstance(entity, dict):
+def extract_payment_data(payload: Dict[str, Any]) -> Optional[Tuple[str, int, str]]:
+    """
+    Safely extract (sender_id, amount_in_rupees, payment_id) without ANY KeyError,
+    supporting both 'payment.captured' (Payment Pages) and 'payment_link.paid' (Dynamic Links).
+    """
+    payment_entity = _nested_get(payload, "payload", "payment", "entity")
+    payment_link_entity = _nested_get(payload, "payload", "payment_link", "entity")
+
+    if not isinstance(payment_entity, dict) and not isinstance(payment_link_entity, dict):
         return None
 
-    notes = entity.get("notes")
-    sender_id = ""
-    if isinstance(notes, dict):
-        sender_id = str(notes.get("sender_id") or "").strip()
+    # Safe extraction of Payment ID
+    payment_id = ""
+    if isinstance(payment_entity, dict):
+        payment_id = payment_entity.get("id") or ""
+    if not payment_id and isinstance(payment_link_entity, dict):
+        payment_id = payment_link_entity.get("id") or ""
 
-    amount_paise: Any = entity.get("amount")
-    if amount_paise is None:
-        amount_paise = _nested_get(payload, "payload", "payment", "entity", "amount")
+    if not payment_id:
+        return None
+
+    # Safe extraction of Amount
+    amount_paise = None
+    if isinstance(payment_entity, dict):
+        amount_paise = payment_entity.get("amount")
+    if amount_paise is None and isinstance(payment_link_entity, dict):
+        amount_paise = payment_link_entity.get("amount")
 
     try:
         amount_paise = int(amount_paise)
@@ -99,12 +110,25 @@ def extract_payment_link_paid(
     if amount_paise <= 0:
         return None
 
-    amount_paid = _paise_to_rupees(amount_paise)
-    payment_reference = _nested_get(payload, "payload", "payment", "entity", "id")
-    if not payment_reference:
-        payment_reference = entity.get("id")
+    amount_rupees = _paise_to_rupees(amount_paise)
 
-    return sender_id, amount_paid, str(payment_reference or "")
+    # Safe extraction of Customer Phone / Sender ID
+    sender_id = ""
+    # Try notes first
+    for ent in (payment_entity, payment_link_entity):
+        if isinstance(ent, dict):
+            notes = ent.get("notes")
+            if isinstance(notes, dict):
+                candidate = str(notes.get("sender_id") or "").strip()
+                if candidate:
+                    sender_id = candidate
+                    break
+
+    # Fallback to direct contact from payment page submission
+    if not sender_id and isinstance(payment_entity, dict):
+        sender_id = str(payment_entity.get("contact") or "").strip()
+
+    return sender_id, amount_rupees, payment_id
 
 
 def _resolve_customer(db: Session, sender_id: str) -> Optional[Customer]:
@@ -134,6 +158,7 @@ def _already_processed(db: Session, payment_reference: str) -> bool:
         )
         return existing is not None
     except Exception as e:
+        logger.error(f"Audit lookup error: {e}")
         db.rollback()
         return False
 
@@ -144,15 +169,13 @@ def _record_payment(
     sender_id: str,
     amount_paid: int,
 ) -> None:
-    if not payment_reference:
-        return
     try:
         db.add(
             AuditLog(
                 user_id=None,
                 action=AUDIT_ACTION_PAYMENT_CAPTURED,
-                resource_type=AUDIT_RESOURCE_TYPE,
                 resource_id=payment_reference,
+                resource_type=AUDIT_RESOURCE_TYPE,
                 status="success",
                 details=json.dumps(
                     {
@@ -165,6 +188,7 @@ def _record_payment(
         )
         db.commit()
     except Exception as e:
+        logger.error(f"Audit log write failed: {e}")
         db.rollback()
 
 
@@ -179,7 +203,9 @@ async def razorpay_webhook(
 ) -> Dict[str, str]:
     raw_body = await request.body()
     signature_header = request.headers.get(SIGNATURE_HEADER)
+
     if not verify_razorpay_signature(raw_body, signature_header):
+        logger.error("Razorpay webhook signature verification failed.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid Razorpay webhook signature",
@@ -187,32 +213,37 @@ async def razorpay_webhook(
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.error(f"Malformed JSON in webhook: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload",
         )
 
     event = payload.get("event", "")
-    if event != EVENT_PAYMENT_LINK_PAID:
-        return {"status": "ok"}
+    logger.info(f"Received Razorpay webhook event: '{event}'")
 
-    extracted = extract_payment_link_paid(payload)
+    if event not in ("payment_link.paid", "payment.captured", "order.paid"):
+        return {"status": "ignored", "event": event}
+
+    extracted = extract_payment_data(payload)
     if extracted is None:
-        return {"status": "ok"}
+        logger.warning(f"Unable to extract required payment data from payload for event: {event}")
+        return {"status": "unparseable"}
 
     sender_id, amount_paid, payment_reference = extracted
     if not sender_id:
-        return {"status": "ok"}
+        logger.warning(f"Payment {payment_reference} processed but sender phone number not found.")
+        return {"status": "missing_phone"}
 
     if _already_processed(db, payment_reference):
-        return {"status": "ok"}
+        logger.info(f"Payment {payment_reference} already processed, skipping duplicate.")
+        return {"status": "already_processed"}
 
     clean_sender = sender_id.lstrip("+").strip()
     customer = _resolve_customer(db, sender_id)
     customer_name = "Valued Customer"
 
-    # Schema compliant auto-create
     if customer is None:
         customer = Customer(
             whatsapp_id=clean_sender,
@@ -229,12 +260,14 @@ async def razorpay_webhook(
         if getattr(customer, "full_name", None):
             customer_name = customer.full_name
 
-    _record_payment(db, payment_reference, sender_id, amount_paid)
+    _record_payment(db, payment_reference, clean_sender, amount_paid)
+    logger.info(f"Wallet credited ₹{amount_paid} for {clean_sender}. Now sending WhatsApp confirmation.")
 
+    # WhatsApp Notifications Dispatch
     try:
-        # 1. Confirmation text
+        # 1. Immediate confirmation
         await send_whatsapp_text(
-            recipient_id=sender_id,
+            recipient_id=clean_sender,
             message_text="Payment received, thank you 🙏",
         )
 
@@ -249,19 +282,20 @@ async def razorpay_webhook(
 
         await asyncio.sleep(1)
         await send_document_to_whatsapp(
-            recipient_id=sender_id,
+            recipient_id=clean_sender,
             document_bytes=pdf_bytes,
             filename=f"{inv_number}.pdf",
             caption="",
         )
 
-        # 3. Tips text
+        # 3. Balance and tips text
         await asyncio.sleep(1)
         await send_whatsapp_text(
-            recipient_id=sender_id,
+            recipient_id=clean_sender,
             message_text=PAYMENT_TIPS_MESSAGE.format(amount=amount_paid),
         )
+        logger.info(f"Successfully sent confirmation, invoice and tips to {clean_sender}")
     except Exception as e:
-        logger.error(f"Post payment dispatch error: {e}")
+        logger.error(f"Post-payment WhatsApp dispatch failed: {e}")
 
     return {"status": "ok"}

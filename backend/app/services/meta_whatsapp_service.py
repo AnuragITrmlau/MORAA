@@ -30,6 +30,25 @@ META_MEDIA_UPLOAD_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/medi
 
 SUPPORTED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
+# ─── 7-Style Earring Catalog Pack (ordered delivery 1..7) ─────────────────
+# Ordered (title, prompt_type) tuples — indexes map to the "N/7" captions.
+CATALOG_PACK_STYLES: List[Tuple[str, str]] = [
+    ("Clean E-Commerce", "prompt_ecommerce"),
+    ("Close-up on Ear", "prompt_close_up"),
+    ("Scale Reference", "prompt_scale_reference"),
+    ("Professional Studio", "prompt_professional"),
+    ("Lifestyle Shot", "prompt_complementary"),
+    ("UGC Style", "prompt_ugc"),
+    ("Macro Shot", "prompt_macro"),
+]
+
+CATALOG_PACK_ACK_TEMPLATE = (
+    "✨ Processing your Earring Catalog Pack (generating all 7 styles)... "
+    "Please allow 20-30 seconds."
+)
+
+CATALOG_PACK_SEND_THROTTLE_SECONDS = 0.8
+
 
 # ─── Webhook payload parsing ─────────────────────────────────────────────
 
@@ -423,6 +442,83 @@ async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
     except Exception as e:
         logger.error(f"Network error sending feedback buttons: {e}")
         return False
+
+
+# ─── 7-Pack catalog delivery ─────────────────────────────────────────────
+
+
+async def send_7_pack_images_to_whatsapp(
+    recipient_id: str,
+    image_urls: list,
+    balance_text: str,
+) -> bool:
+    """Deliver the complete 7-style Earring Catalog Pack to a WhatsApp user.
+
+    Sends each generated image sequentially with a 0.8s throttle between
+    messages to stay well inside Meta Cloud API rate limits:
+        - Images 1..6:  media message captioned "N/7 <style title>".
+        - Image 7:      closing caption with the pack summary and the
+                        customer's remaining wallet balance.
+
+    Args:
+        recipient_id: WhatsApp sender phone number (e.g. "919876543210").
+        image_urls: Ordered list of Meta media IDs (as returned by
+            ``upload_media_to_meta``) for the 7 generated styles.
+        balance_text: Pre-formatted balance line for the 7/7 caption,
+            e.g. "₹1000" or "₹0".
+
+    Returns:
+        True only when every provided image was accepted by the Meta Send
+        API; False if any send fails. Partial deliveries log each failure
+        and continue with the remaining images.
+    """
+    if not recipient_id:
+        logger.error("send_7_pack_images_to_whatsapp: missing recipient_id")
+        return False
+
+    if not image_urls:
+        logger.error("send_7_pack_images_to_whatsapp: no images to deliver")
+        return False
+
+    total = len(CATALOG_PACK_STYLES)
+    all_sent = True
+
+    for index, media_id in enumerate(image_urls, start=1):
+        style_title = (
+            CATALOG_PACK_STYLES[index - 1][0]
+            if index <= total
+            else f"Style {index}"
+        )
+
+        if index == total:
+            caption = (
+                f"7/7 {style_title} ✨\n"
+                "Here's your complete 7-style E-commerce Pack 📦\n"
+                f"Remaining balance: {balance_text}"
+            )
+        else:
+            caption = f"{index}/7 {style_title}"
+
+        send_ok = await send_image_to_whatsapp(
+            recipient_id=recipient_id,
+            media_id=media_id,
+            caption=caption,
+        )
+        if not send_ok:
+            all_sent = False
+            logger.error(
+                f"7-pack delivery: image {index}/7 failed — "
+                f"recipient={recipient_id} media_id={media_id}"
+            )
+
+        if index < len(image_urls):
+            await asyncio.sleep(CATALOG_PACK_SEND_THROTTLE_SECONDS)
+
+    if all_sent:
+        logger.info(
+            f"7-pack delivery complete: recipient={recipient_id} images={len(image_urls)}"
+        )
+    return all_sent
 
 
 # ─── Plain text + CTA button messages ─────────────────────────────────────
@@ -844,3 +940,243 @@ async def send_document_to_whatsapp(
     except Exception as e:
         logger.error(f"Exception sending document to WhatsApp: {e}")
         return False
+
+
+# ─── 7-Style Catalog Pack generation orchestrator ────────────────────────
+
+
+async def _generate_single_pack_style(
+    ingestion_id: str,
+    style_title: str,
+    prompt: str,
+    reference_image_bytes: bytes,
+    reference_mime_type: str,
+    request_id: str,
+) -> Optional[str]:
+    """Generate one style of the catalog pack and return its image data URL.
+
+    Runs the EXISTING ImageGenerationManager provider chain (failover
+    included). Never raises — failures are logged and returned as None so
+    one broken style cannot cancel its siblings in the parallel gather.
+    """
+    try:
+        from app.ai.image_generation_manager import ImageGenerationManager
+
+        manager = ImageGenerationManager()
+        result = await manager.generate_image(
+            prompt=prompt,
+            context={"request_id": request_id, "aspect_ratio": "4:5"},
+            reference_image=reference_image_bytes,
+            reference_mime_type=reference_mime_type,
+        )
+
+        if not result.success or not result.image_url:
+            logger.error(
+                f"7-pack generation failed for style='{style_title}' "
+                f"ingestion_id={ingestion_id}: {result.error}"
+            )
+            return None
+
+        return result.image_url
+
+    except Exception as e:
+        logger.error(
+            f"7-pack generation exception for style='{style_title}' "
+            f"ingestion_id={ingestion_id}: {e}"
+        )
+        return None
+
+
+async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
+    """Generate all 7 catalog styles in parallel and deliver them to WhatsApp.
+
+    Orchestrates the full 7-style Earring Catalog Pack for one stored
+    WhatsApp ingestion:
+        1. Load the ingestion + Image record (same guards as the single
+           generation flow — this is the fallback path).
+        2. Build all 7 style prompts from the existing per-style modules.
+        3. Run all 7 generation pipelines concurrently via asyncio.gather.
+        4. Upload every successful image to the Meta media API.
+        5. Deliver the pack sequentially (0.8s throttle) with per-style
+           captions and the customer's remaining balance on the last image.
+
+    Zero-success runs mark the ingestion 'failed'. Partial-success runs
+    still deliver whatever was generated (the user is not left empty-handed).
+
+    Returns:
+        True when the pack was generated and delivered; False otherwise.
+    """
+    from app.database import SessionLocal
+    from app.models.image import Image
+    from app.models.whatsapp_ingestion import WhatsAppIngestion
+    from app.services.earring_ecommerce_prompt import build_earring_ecommerce_prompt
+    from app.services.earring_close_up_ears_prompt import build_close_up_ears_prompt
+    from app.services.earring_scale_reference_prompt import build_scale_reference_prompt
+    from app.services.earring_professional_shot_prompt import build_professional_shot_prompt
+    from app.services.earring_complementary_shot_prompt import build_complementary_shot_prompt
+    from app.services.earring_ugc_style_prompt import build_ugc_style_prompt
+    from app.services.earring_macro_shot_prompt import build_macro_shot_prompt
+    from app.models.customer import Customer
+
+    style_prompt_builders = {
+        "prompt_ecommerce": build_earring_ecommerce_prompt,
+        "prompt_close_up": build_close_up_ears_prompt,
+        "prompt_scale_reference": build_scale_reference_prompt,
+        "prompt_professional": build_professional_shot_prompt,
+        "prompt_complementary": build_complementary_shot_prompt,
+        "prompt_ugc": build_ugc_style_prompt,
+        "prompt_macro": build_macro_shot_prompt,
+    }
+
+    db = SessionLocal()
+    try:
+        ingestion = db.query(WhatsAppIngestion).filter(
+            WhatsAppIngestion.id == ingestion_id
+        ).first()
+
+        if not ingestion:
+            logger.error(f"7-pack generation: ingestion not found: {ingestion_id}")
+            return False
+
+        if ingestion.status == "processing":
+            logger.info(
+                f"7-pack generation: skipping ingestion {ingestion_id} — already in progress"
+            )
+            return False
+
+        ingestion.status = "processing"
+        ingestion.error_message = None
+        db.commit()
+
+        image_record = db.query(Image).filter(Image.id == ingestion.image_id).first()
+        if not image_record:
+            _fail_ingestion(db, ingestion, "Image record not found")
+            return False
+
+        from pathlib import Path
+        image_path = Path(image_record.file_path)
+        if not image_path.exists():
+            _fail_ingestion(db, ingestion, f"Image file not found: {image_path}")
+            return False
+
+        reference_image_bytes = image_path.read_bytes()
+        if len(reference_image_bytes) == 0:
+            _fail_ingestion(db, ingestion, "Image file is empty")
+            return False
+
+        # ── Build all 7 style prompts from the existing modules ──
+        style_jobs: List[Tuple[str, str]] = []
+        for style_title, prompt_type in CATALOG_PACK_STYLES:
+            builder = style_prompt_builders.get(prompt_type)
+            if builder is None:
+                logger.error(
+                    f"7-pack generation: no prompt builder for '{prompt_type}' — skipping style"
+                )
+                continue
+            style_jobs.append((style_title, builder()))
+
+        if not style_jobs:
+            _fail_ingestion(db, ingestion, "No valid style prompt builders available")
+            return False
+
+        # ── Run all 7 generation pipelines in parallel ──
+        logger.info(
+            f"7-pack generation started: ingestion_id={ingestion_id} "
+            f"styles={len(style_jobs)}"
+        )
+
+        gather_results = await asyncio.gather(
+            *[
+                _generate_single_pack_style(
+                    ingestion_id=ingestion_id,
+                    style_title=style_title,
+                    prompt=prompt,
+                    reference_image_bytes=reference_image_bytes,
+                    reference_mime_type=ingestion.mime_type or "image/jpeg",
+                    request_id=ingestion.request_id,
+                )
+                for style_title, prompt in style_jobs
+            ]
+        )
+
+        generated_data_urls: List[str] = [
+            data_url for data_url in gather_results if data_url
+        ]
+
+        if not generated_data_urls:
+            _fail_ingestion(db, ingestion, "All 7 catalog style generations failed")
+            return False
+
+        failed_style_count = len(style_jobs) - len(generated_data_urls)
+        if failed_style_count > 0:
+            logger.warning(
+                f"7-pack partial generation: ingestion_id={ingestion_id} "
+                f"{len(generated_data_urls)}/{len(style_jobs)} styles succeeded"
+            )
+
+        ingestion.status = "generated"
+        db.commit()
+
+        # ── Upload every generated image to the Meta media API (ordered) ──
+        media_ids: List[str] = []
+        for data_url in generated_data_urls:
+            generated_image_bytes = _data_url_to_bytes(data_url)
+            if not generated_image_bytes:
+                logger.error(
+                    f"7-pack delivery: failed to decode image data for ingestion_id={ingestion_id}"
+                )
+                continue
+
+            media_id = await upload_media_to_meta(generated_image_bytes)
+            if not media_id:
+                logger.error(
+                    f"7-pack delivery: Meta media upload failed for ingestion_id={ingestion_id}"
+                )
+                continue
+
+            media_ids.append(media_id)
+
+        if not media_ids:
+            _fail_delivery(db, ingestion, "All Meta media uploads failed")
+            return False
+
+        # ── Resolve remaining wallet balance for the closing caption ──
+        # Same fuzzy matching as the webhook's _find_customer_safe (leading
+        # '+' / '91' country-code variants must still resolve).
+        clean_sender = ingestion.external_user_id.lstrip("+").strip()
+        customer = db.query(Customer).filter(
+            Customer.whatsapp_id == clean_sender
+        ).first()
+        if not customer and len(clean_sender) >= 10:
+            customer = db.query(Customer).filter(
+                Customer.whatsapp_id.contains(clean_sender[-10:])
+            ).first()
+        current_balance = customer.wallet_balance if customer else 0
+        balance_text = f"₹{current_balance:,}"
+
+        # ── Sequential throttled delivery of the full pack ──
+        delivered = await send_7_pack_images_to_whatsapp(
+            recipient_id=ingestion.external_user_id,
+            image_urls=media_ids,
+            balance_text=balance_text,
+        )
+
+        if not delivered:
+            _fail_delivery(db, ingestion, "7-pack Meta message delivery failed")
+            return False
+
+        ingestion.status = "delivered"
+        ingestion.error_message = None
+        db.commit()
+
+        logger.info(
+            f"7-pack delivered: ingestion_id={ingestion_id} images={len(media_ids)} "
+            f"recipient={ingestion.external_user_id}"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"7-pack generation exception: ingestion_id={ingestion_id} error={e}")
+        return False
+    finally:
+        db.close()

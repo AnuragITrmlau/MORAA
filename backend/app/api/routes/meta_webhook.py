@@ -24,6 +24,7 @@ from app.models.whatsapp_ingestion import WhatsAppIngestion
 from app.repositories.base import BaseRepository
 from app.services.image_quality_guard import validate_jewelry_image_with_gemini
 from app.services.meta_whatsapp_service import (
+    CATALOG_PACK_ACK_TEMPLATE,
     download_media,
     get_media_url,
     parse_webhook_entry,
@@ -35,6 +36,7 @@ from app.services.meta_whatsapp_service import (
     validate_image,
     verify_webhook_signature,
 )
+from app.tasks.whatsapp_generation_tasks import process_whatsapp_7_pack_task
 from app.services.razorpay_service import create_recharge_payment_link
 from app.services.upload_service import UploadService
 from app.services.wallet_service import get_customer
@@ -42,7 +44,8 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
-DEFAULT_PAYMENT_URL = "https://rzp.io/l/moraa-recharge"
+# Active and verified permanent payment page link
+DEFAULT_PAYMENT_URL = "https://rzp.io/rzp/FbuLh9je"
 COST_PER_PRODUCT = 500
 
 
@@ -98,7 +101,8 @@ async def process_partial_order_batch(
                 customer_name="Customer",
                 amount=500,
             )
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to generate recharge link in partial order: {e}")
             recharge_url = DEFAULT_PAYMENT_URL
 
         reminder_text = (
@@ -285,7 +289,8 @@ async def receive_webhook(
                             customer_name=user_name,
                             amount=500,
                         )
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Failed to generate registration recharge link: {e}")
                         pay_url = DEFAULT_PAYMENT_URL
 
                     await send_whatsapp_cta_url_button(
@@ -335,7 +340,8 @@ async def receive_webhook(
                             customer_name=cust_name,
                             amount=requested_amount,
                         )
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Failed to generate custom recharge link: {e}")
                         pay_url = DEFAULT_PAYMENT_URL
 
                     await send_whatsapp_cta_url_button(
@@ -399,7 +405,8 @@ async def receive_webhook(
                 customer_name=cust_name,
                 amount=500,
             )
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to generate zero balance recharge link: {e}")
             pay_url = DEFAULT_PAYMENT_URL
 
         zero_balance_msg = (
@@ -503,11 +510,15 @@ async def receive_webhook(
 
         processed_ingestion_ids.append(ingestion.id)
 
-        if not is_partial:
-            send_ok = await send_prompt_selection_buttons(recipient_id=sender, ingestion_id=ingestion.id)
-            if send_ok:
-                ingestion.status = "awaiting_selection"
-                db.commit()
+        # ── 7-Pack auto-flow: no manual style selection ──
+        ack_ok = await send_whatsapp_text(sender, CATALOG_PACK_ACK_TEMPLATE)
+        if ack_ok:
+            ingestion.status = "pack_queued"
+        else:
+            ingestion.status = "stored"
+        db.commit()
+
+        process_whatsapp_7_pack_task.delay(ingestion.id)
 
     if is_partial and processed_ingestion_ids:
         background_tasks.add_task(
@@ -518,7 +529,11 @@ async def receive_webhook(
             unprocessed_count=total_images - allowed_count,
         )
 
-    return {"status": "ok", "queued": len(processed_ingestion_ids)}
+    return {
+        "status": "ok",
+        "queued": len(processed_ingestion_ids),
+        "packs_triggered": len(processed_ingestion_ids),
+    }
 
 
 # ─── GET — Health Check ──────────────────────────────────────────────────
