@@ -12,33 +12,54 @@ load_dotenv(backend_dir / ".env")
 load_dotenv(backend_dir.parent / ".env")
 
 import httpx
-from app.services.erpnext_service import ERPNextService
 
 async def main():
-    service = ERPNextService()
-    # Test customer already exists, fetch or use 'Test User'
-    customer_id = "Test User"
-    
-    # Direct test request with full error response print
-    url = f"{service.base_url}/api/resource/Sales Invoice"
-    payload = {
-        "company": service.company or "moraa",
-        "customer": customer_id,
-        "items": [
-            {
-                "item_code": "GEMVISION-WALLET-RECHARGE",
-                "qty": 1,
-                "rate": 10.0
-            }
-        ]
+    base_url = os.getenv("ERPNEXT_BASE_URL", "").rstrip("/")
+    api_key = os.getenv("ERPNEXT_API_KEY", "")
+    api_secret = os.getenv("ERPNEXT_API_SECRET", "")
+    company = os.getenv("ERPNEXT_COMPANY", "moraa")
+
+    headers = {
+        "Authorization": f"token {api_key}:{api_secret}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
-    
+
+    item_code = "GEMVISION-WALLET-RECHARGE"
+
     async with httpx.AsyncClient() as client:
-        res = await client.post(url, headers=service.headers, json=payload)
-        print("\n--- ERPNext Full Response ---")
+        # 1. Ensure Item exists
+        item_res = await client.get(f"{base_url}/api/resource/Item/{item_code}", headers=headers)
+        if item_res.status_code == 404:
+            print(f"Creating Item '{item_code}' in ERPNext...")
+            new_item_payload = {
+                "item_code": item_code,
+                "item_name": "GemVision Wallet Recharge",
+                "item_group": "Services",
+                "is_stock_item": 0
+            }
+            create_item_res = await client.post(f"{base_url}/api/resource/Item", headers=headers, json=new_item_payload)
+            print(f"Item creation status: {create_item_res.status_code}")
+
+        # 2. Create Sales Invoice
+        print("\nCreating Sales Invoice...")
+        invoice_payload = {
+            "company": company,
+            "customer": "Test User",
+            "items": [
+                {
+                    "item_code": item_code,
+                    "qty": 1,
+                    "rate": 10.0
+                }
+            ]
+        }
+        res = await client.post(f"{base_url}/api/resource/Sales Invoice", headers=headers, json=invoice_payload)
+        print("\n================ ERPNEXT RESPONSE ================")
         print(f"Status Code: {res.status_code}")
+        print("Raw Response Text:")
         print(res.text)
-        print("-----------------------------\n")
+        print("==================================================\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
