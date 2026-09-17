@@ -31,7 +31,6 @@ META_MEDIA_UPLOAD_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/medi
 SUPPORTED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
 # ─── 7-Style Earring Catalog Pack (ordered delivery 1..7) ─────────────────
-# Ordered (title, prompt_type) tuples — indexes map to the "N/7" captions.
 CATALOG_PACK_STYLES: List[Tuple[str, str]] = [
     ("Clean E-Commerce", "prompt_ecommerce"),
     ("Close-up on Ear", "prompt_close_up"),
@@ -357,7 +356,7 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
                 json=payload,
             )
 
-            if response.status_code != 200:
+            if response.status_code not in (200, 201):
                 logger.error(f"Meta send button message failed: status={response.status_code}")
                 return False
 
@@ -384,148 +383,18 @@ async def send_prompt_selection_buttons(recipient_id: str, ingestion_id: str) ->
 
 async def send_feedback_buttons(recipient_id: str, ingestion_id: str) -> bool:
     """Send post-generation interactive feedback buttons."""
-    # TEMPORARILY DISABLED: outgoing feedback message is suppressed for now.
-    # Re-enable by removing this early return.
     return True
-
-    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
-        logger.error("Meta credentials not configured — cannot send feedback buttons")
-        return False
-
-    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": recipient_id,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {
-                "text": "How did we do? We’d love your feedback 🌟"
-            },
-            "action": {
-                "buttons": [
-                    {
-                        "type": "reply",
-                        "reply": {
-                            "id": f"feedback_positive:{ingestion_id}",
-                            "title": "😍 Yes, this is good",
-                        },
-                    },
-                    {
-                        "type": "reply",
-                        "reply": {
-                            "id": f"feedback_negative:{ingestion_id}",
-                            "title": "🤕 I didn't like it",
-                        },
-                    },
-                ],
-            },
-        },
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            if resp.status_code == 200:
-                logger.info(f"Feedback buttons sent to {recipient_id} for ingestion_id={ingestion_id}")
-                return True
-            else:
-                logger.error(f"Failed to send feedback buttons: status={resp.status_code} body={resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Network error sending feedback buttons: {e}")
-        return False
-
-
-# ─── 7-Pack catalog delivery ─────────────────────────────────────────────
-
-
-async def send_7_pack_images_to_whatsapp(
-    recipient_id: str,
-    image_urls: list,
-    balance_text: str,
-) -> bool:
-    """Deliver the complete 7-style Earring Catalog Pack to a WhatsApp user.
-
-    Sends each generated image sequentially with a 0.8s throttle between
-    messages to stay well inside Meta Cloud API rate limits:
-        - Images 1..6:  media message captioned "N/7 <style title>".
-        - Image 7:      closing caption with the pack summary and the
-                        customer's remaining wallet balance.
-
-    Args:
-        recipient_id: WhatsApp sender phone number (e.g. "919876543210").
-        image_urls: Ordered list of Meta media IDs (as returned by
-            ``upload_media_to_meta``) for the 7 generated styles.
-        balance_text: Pre-formatted balance line for the 7/7 caption,
-            e.g. "₹1000" or "₹0".
-
-    Returns:
-        True only when every provided image was accepted by the Meta Send
-        API; False if any send fails. Partial deliveries log each failure
-        and continue with the remaining images.
-    """
-    if not recipient_id:
-        logger.error("send_7_pack_images_to_whatsapp: missing recipient_id")
-        return False
-
-    if not image_urls:
-        logger.error("send_7_pack_images_to_whatsapp: no images to deliver")
-        return False
-
-    total = len(CATALOG_PACK_STYLES)
-    all_sent = True
-
-    for index, media_id in enumerate(image_urls, start=1):
-        style_title = (
-            CATALOG_PACK_STYLES[index - 1][0]
-            if index <= total
-            else f"Style {index}"
-        )
-
-        if index == total:
-            caption = (
-                f"7/7 {style_title} ✨\n"
-                "Here's your complete 7-style E-commerce Pack 📦\n"
-                f"Remaining balance: {balance_text}"
-            )
-        else:
-            caption = f"{index}/7 {style_title}"
-
-        send_ok = await send_image_to_whatsapp(
-            recipient_id=recipient_id,
-            media_id=media_id,
-            caption=caption,
-        )
-        if not send_ok:
-            all_sent = False
-            logger.error(
-                f"7-pack delivery: image {index}/7 failed — "
-                f"recipient={recipient_id} media_id={media_id}"
-            )
-
-        if index < len(image_urls):
-            await asyncio.sleep(CATALOG_PACK_SEND_THROTTLE_SECONDS)
-
-    if all_sent:
-        logger.info(
-            f"7-pack delivery complete: recipient={recipient_id} images={len(image_urls)}"
-        )
-    return all_sent
 
 
 # ─── Plain text + CTA button messages ─────────────────────────────────────
 
 
-async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
-    """POST a message payload to the Meta Send API with standard guards."""
+async def _post_message_payload(
+    payload: Dict[str, Any],
+    label: str,
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
+    """POST a message payload to the Meta Send API with optional context quote."""
     if not settings.META_WHATSAPP_TOKEN:
         logger.error(f"META_WHATSAPP_TOKEN not configured — cannot send {label}")
         return False
@@ -533,6 +402,9 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
     if not settings.META_PHONE_NUMBER_ID:
         logger.error(f"META_PHONE_NUMBER_ID not configured — cannot send {label}")
         return False
+
+    if reply_to_message_id:
+        payload["context"] = {"message_id": reply_to_message_id}
 
     url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
 
@@ -547,8 +419,8 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
                 json=payload,
             )
 
-            if response.status_code != 200:
-                logger.error(f"Meta send {label} failed: status={response.status_code}")
+            if response.status_code not in (200, 201):
+                logger.error(f"Meta send {label} failed: status={response.status_code} body={response.text}")
                 return False
 
             data = response.json()
@@ -571,9 +443,32 @@ async def _post_message_payload(payload: Dict[str, Any], label: str) -> bool:
         return False
 
 
-async def send_whatsapp_text(recipient_id: str, message_text: str) -> bool:
+async def send_whatsapp_text(
+    recipient_id: str,
+    message_text: str,
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
     """Send a plain text WhatsApp message."""
-    return await send_text_message(recipient_id, message_text)
+    return await send_text_message(recipient_id, message_text, reply_to_message_id=reply_to_message_id)
+
+
+async def send_text_message(
+    recipient_id: str,
+    text: str,
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
+    """Send a plain text message to a WhatsApp user with optional reply quoting."""
+    if not recipient_id or not text:
+        return False
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "text",
+        "text": {"preview_url": False, "body": text},
+    }
+
+    return await _post_message_payload(payload, "text message", reply_to_message_id=reply_to_message_id)
 
 
 async def send_whatsapp_cta_url_button(
@@ -581,8 +476,9 @@ async def send_whatsapp_cta_url_button(
     body_text: str,
     button_label: str,
     url: str,
+    reply_to_message_id: Optional[str] = None,
 ) -> bool:
-    """Send an interactive CTA-URL button."""
+    """Send an interactive CTA-URL button with optional context quoting."""
     if not recipient_id or not body_text:
         logger.warning("send_whatsapp_cta_url_button called without recipient/body — skipped")
         return False
@@ -615,22 +511,7 @@ async def send_whatsapp_cta_url_button(
         },
     }
 
-    return await _post_message_payload(payload, "interactive CTA URL button")
-
-
-async def send_text_message(recipient_id: str, text: str) -> bool:
-    """Send a plain text message to a WhatsApp user."""
-    if not recipient_id or not text:
-        return False
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": recipient_id,
-        "type": "text",
-        "text": {"preview_url": False, "body": text},
-    }
-
-    return await _post_message_payload(payload, "text message")
+    return await _post_message_payload(payload, "interactive CTA URL button", reply_to_message_id=reply_to_message_id)
 
 
 async def send_interactive_cta_button(
@@ -638,6 +519,7 @@ async def send_interactive_cta_button(
     body_text: str,
     button_id: str,
     button_title: str,
+    reply_to_message_id: Optional[str] = None,
 ) -> bool:
     """Send an interactive single-button (CTA) message."""
     if not recipient_id or not button_id or not button_title:
@@ -664,7 +546,197 @@ async def send_interactive_cta_button(
         },
     }
 
-    return await _post_message_payload(payload, "interactive CTA button")
+    return await _post_message_payload(payload, "interactive CTA button", reply_to_message_id=reply_to_message_id)
+
+
+# ─── Pure-white background knockout (e-commerce path override) ───────────
+
+_ECOMMERCE_WHITE_KNOCKOUT: str = (
+    "BACKGROUND LOCK (NON-NEGOTIABLE OVERRIDE):\n"
+    "Background: 100% flat pure digital white (#FFFFFF, RGB 255, 255, 255) "
+    "across the entire canvas edge-to-edge. Zero grey falloff, zero color "
+    "tint, zero vignette, zero floor seam, zero textured canvas. Pure white "
+    "knockout background. The earring pair is suspended or placed with only "
+    "a crisp subtle contact drop shadow directly underneath.\n"
+    "Lighting: ISOLATED studio lighting — light falls on the earrings only. "
+    "Zero ambient fill, zero bounce light washing the canvas. Lighting "
+    "illuminates the product; it must never tint the background. Shadows "
+    "are limited to a crisp subtle contact drop shadow directly underneath "
+    "the earrings."
+)
+
+
+def _with_white_background_knockout(prompt: str) -> str:
+    """Append the pure-white background knockout to an e-commerce prompt."""
+    if not isinstance(prompt, str):
+        raise TypeError(
+            f"prompt must be a string, got {type(prompt).__name__}"
+        )
+    if _ECOMMERCE_WHITE_KNOCKOUT in prompt:
+        return prompt
+    return f"{prompt}\n\n{_ECOMMERCE_WHITE_KNOCKOUT}"
+
+
+# ─── WhatsApp message send ───────────────────────────────────────────────
+
+
+async def send_image_to_whatsapp(
+    recipient_id: str,
+    media_id: str,
+    caption: str = "Your e-commerce image is ready.",
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
+    """Send an image message to a WhatsApp user via Meta Send API with contextual quote."""
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        return False
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "type": "image",
+        "image": {
+            "id": media_id,
+            "caption": caption,
+        },
+    }
+
+    return await _post_message_payload(payload, "image", reply_to_message_id=reply_to_message_id)
+
+
+async def send_document_to_whatsapp(
+    recipient_id: str,
+    document_bytes: bytes,
+    filename: str = "invoice.pdf",
+    caption: str = "",
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
+    """Upload and deliver a PDF document to WhatsApp via Meta Cloud API."""
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials not configured for document upload")
+        return False
+
+    upload_url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            files = {"file": (filename, document_bytes, "application/pdf")}
+            data = {"messaging_product": "whatsapp", "type": "application/pdf"}
+            headers = {"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"}
+
+            upload_resp = await client.post(upload_url, headers=headers, files=files, data=data)
+            if upload_resp.status_code not in (200, 201):
+                logger.error(f"Failed to upload invoice document: {upload_resp.text}")
+                return False
+
+            media_id = upload_resp.json().get("id")
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": recipient_id,
+                "type": "document",
+                "document": {
+                    "id": media_id,
+                    "filename": filename,
+                    "caption": caption,
+                },
+            }
+            return await _post_message_payload(payload, "document", reply_to_message_id=reply_to_message_id)
+
+    except Exception as e:
+        logger.error(f"Exception sending document to WhatsApp: {e}")
+        return False
+
+
+# ─── 7-Pack catalog delivery ─────────────────────────────────────────────
+
+
+async def send_7_pack_images_to_whatsapp(
+    recipient_id: str,
+    image_urls: list,
+    balance_text: str,
+    reply_to_message_id: Optional[str] = None,
+) -> bool:
+    """Deliver the complete 7-style Earring Catalog Pack to WhatsApp with contextual quote."""
+    if not recipient_id or not image_urls:
+        return False
+
+    total = len(CATALOG_PACK_STYLES)
+    all_sent = True
+
+    for index, media_id in enumerate(image_urls, start=1):
+        style_title = (
+            CATALOG_PACK_STYLES[index - 1][0]
+            if index <= total
+            else f"Style {index}"
+        )
+
+        if index == total:
+            caption = (
+                f"7/7 {style_title} ✨\n"
+                "Here's your complete 7-style E-commerce Pack 📦\n"
+                f"Remaining balance: {balance_text}"
+            )
+        else:
+            caption = f"{index}/7 {style_title}"
+
+        quote_id = reply_to_message_id if index == 1 else None
+
+        send_ok = await send_image_to_whatsapp(
+            recipient_id=recipient_id,
+            media_id=media_id,
+            caption=caption,
+            reply_to_message_id=quote_id,
+        )
+        if not send_ok:
+            all_sent = False
+            logger.error(
+                f"7-pack delivery: image {index}/7 failed — "
+                f"recipient={recipient_id} media_id={media_id}"
+            )
+
+        if index < len(image_urls):
+            await asyncio.sleep(CATALOG_PACK_SEND_THROTTLE_SECONDS)
+
+    return all_sent
+
+
+# ─── Meta media upload ───────────────────────────────────────────────────
+
+
+async def upload_media_to_meta(
+    image_bytes: bytes,
+    mime_type: str = "image/png",
+) -> Optional[str]:
+    """Upload an image to Meta's WhatsApp media API."""
+    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
+        logger.error("Meta credentials missing for media upload")
+        return None
+
+    url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+            ext = ext_map.get(mime_type, ".png")
+
+            response = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"},
+                files={"file": (f"generated{ext}", image_bytes, mime_type)},
+                data={"messaging_product": "whatsapp", "type": mime_type},
+            )
+
+            if response.status_code not in (200, 201):
+                logger.error(f"Meta media upload failed: status={response.status_code}")
+                return None
+
+            data = response.json()
+            return data.get("id")
+
+    except Exception as e:
+        logger.error(f"Meta media upload exception: {e}")
+        return None
 
 
 # ─── Generation trigger ──────────────────────────────────────────────────
@@ -719,15 +791,18 @@ async def process_whatsapp_generation(
             _fail_ingestion(db, ingestion, "Image file is empty")
             return False
 
-        # Route prompt builder
         if prompt_type == "prompt_ecommerce":
-            prompt = build_earring_ecommerce_prompt()
+            prompt = _with_white_background_knockout(
+                build_earring_ecommerce_prompt()
+            )
         elif prompt_type == "prompt_close_up":
             prompt = build_close_up_ears_prompt()
         elif prompt_type == "prompt_ugc":
             prompt = build_ugc_style_prompt()
         else:
-            prompt = build_earring_ecommerce_prompt()
+            prompt = _with_white_background_knockout(
+                build_earring_ecommerce_prompt()
+            )
 
         manager = ImageGenerationManager()
         result = await manager.generate_image(
@@ -765,6 +840,7 @@ async def process_whatsapp_generation(
             recipient_id=ingestion.external_user_id,
             media_id=media_id,
             caption=send_caption,
+            reply_to_message_id=ingestion.external_message_id,
         )
 
         if not send_ok:
@@ -819,129 +895,6 @@ def _data_url_to_bytes(data_url: str) -> Optional[bytes]:
         return None
 
 
-# ─── Meta media upload ───────────────────────────────────────────────────
-
-
-async def upload_media_to_meta(
-    image_bytes: bytes,
-    mime_type: str = "image/png",
-) -> Optional[str]:
-    """Upload an image to Meta's WhatsApp media API."""
-    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
-        logger.error("Meta credentials missing for media upload")
-        return None
-
-    url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
-            ext = ext_map.get(mime_type, ".png")
-
-            response = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"},
-                files={"file": (f"generated{ext}", image_bytes, mime_type)},
-                data={"messaging_product": "whatsapp", "type": mime_type},
-            )
-
-            if response.status_code != 200:
-                logger.error(f"Meta media upload failed: status={response.status_code}")
-                return None
-
-            data = response.json()
-            return data.get("id")
-
-    except Exception as e:
-        logger.error(f"Meta media upload exception: {e}")
-        return None
-
-
-# ─── WhatsApp message send ───────────────────────────────────────────────
-
-
-async def send_image_to_whatsapp(
-    recipient_id: str,
-    media_id: str,
-    caption: str = "Your e-commerce image is ready.",
-) -> bool:
-    """Send an image message to a WhatsApp user via Meta Send API."""
-    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
-        return False
-
-    url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": recipient_id,
-        "type": "image",
-        "image": {
-            "id": media_id,
-            "caption": caption,
-        },
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Meta send message failed: {e}")
-        return False
-
-
-async def send_document_to_whatsapp(
-    recipient_id: str,
-    document_bytes: bytes,
-    filename: str = "invoice.pdf",
-    caption: str = "",
-) -> bool:
-    """Upload and deliver a PDF document to WhatsApp via Meta Cloud API."""
-    if not settings.META_WHATSAPP_TOKEN or not settings.META_PHONE_NUMBER_ID:
-        logger.error("Meta credentials not configured for document upload")
-        return False
-
-    upload_url = META_MEDIA_UPLOAD_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-    msg_url = META_SEND_MESSAGE_URL.format(phone_number_id=settings.META_PHONE_NUMBER_ID)
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            files = {"file": (filename, document_bytes, "application/pdf")}
-            data = {"messaging_product": "whatsapp", "type": "application/pdf"}
-            headers = {"Authorization": f"Bearer {settings.META_WHATSAPP_TOKEN}"}
-
-            upload_resp = await client.post(upload_url, headers=headers, files=files, data=data)
-            if upload_resp.status_code != 200:
-                logger.error(f"Failed to upload invoice document: {upload_resp.text}")
-                return False
-
-            media_id = upload_resp.json().get("id")
-
-            payload = {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": recipient_id,
-                "type": "document",
-                "document": {
-                    "id": media_id,
-                    "filename": filename,
-                    "caption": caption,
-                },
-            }
-            send_resp = await client.post(msg_url, headers=headers, json=payload)
-            return send_resp.status_code in (200, 201)
-
-    except Exception as e:
-        logger.error(f"Exception sending document to WhatsApp: {e}")
-        return False
-
-
 # ─── 7-Style Catalog Pack generation orchestrator ────────────────────────
 
 
@@ -953,12 +906,7 @@ async def _generate_single_pack_style(
     reference_mime_type: str,
     request_id: str,
 ) -> Optional[str]:
-    """Generate one style of the catalog pack and return its image data URL.
-
-    Runs the EXISTING ImageGenerationManager provider chain (failover
-    included). Never raises — failures are logged and returned as None so
-    one broken style cannot cancel its siblings in the parallel gather.
-    """
+    """Generate one style of the catalog pack and return its image data URL."""
     try:
         from app.ai.image_generation_manager import ImageGenerationManager
 
@@ -988,24 +936,7 @@ async def _generate_single_pack_style(
 
 
 async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
-    """Generate all 7 catalog styles in parallel and deliver them to WhatsApp.
-
-    Orchestrates the full 7-style Earring Catalog Pack for one stored
-    WhatsApp ingestion:
-        1. Load the ingestion + Image record (same guards as the single
-           generation flow — this is the fallback path).
-        2. Build all 7 style prompts from the existing per-style modules.
-        3. Run all 7 generation pipelines concurrently via asyncio.gather.
-        4. Upload every successful image to the Meta media API.
-        5. Deliver the pack sequentially (0.8s throttle) with per-style
-           captions and the customer's remaining balance on the last image.
-
-    Zero-success runs mark the ingestion 'failed'. Partial-success runs
-    still deliver whatever was generated (the user is not left empty-handed).
-
-    Returns:
-        True when the pack was generated and delivered; False otherwise.
-    """
+    """Generate all 7 catalog styles in parallel and deliver them to WhatsApp."""
     from app.database import SessionLocal
     from app.models.image import Image
     from app.models.whatsapp_ingestion import WhatsAppIngestion
@@ -1019,7 +950,9 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
     from app.models.customer import Customer
 
     style_prompt_builders = {
-        "prompt_ecommerce": build_earring_ecommerce_prompt,
+        "prompt_ecommerce": lambda: _with_white_background_knockout(
+            build_earring_ecommerce_prompt()
+        ),
         "prompt_close_up": build_close_up_ears_prompt,
         "prompt_scale_reference": build_scale_reference_prompt,
         "prompt_professional": build_professional_shot_prompt,
@@ -1064,14 +997,10 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_ingestion(db, ingestion, "Image file is empty")
             return False
 
-        # ── Build all 7 style prompts from the existing modules ──
         style_jobs: List[Tuple[str, str]] = []
         for style_title, prompt_type in CATALOG_PACK_STYLES:
             builder = style_prompt_builders.get(prompt_type)
             if builder is None:
-                logger.error(
-                    f"7-pack generation: no prompt builder for '{prompt_type}' — skipping style"
-                )
                 continue
             style_jobs.append((style_title, builder()))
 
@@ -1079,7 +1008,6 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_ingestion(db, ingestion, "No valid style prompt builders available")
             return False
 
-        # ── Run all 7 generation pipelines in parallel ──
         logger.info(
             f"7-pack generation started: ingestion_id={ingestion_id} "
             f"styles={len(style_jobs)}"
@@ -1107,31 +1035,17 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_ingestion(db, ingestion, "All 7 catalog style generations failed")
             return False
 
-        failed_style_count = len(style_jobs) - len(generated_data_urls)
-        if failed_style_count > 0:
-            logger.warning(
-                f"7-pack partial generation: ingestion_id={ingestion_id} "
-                f"{len(generated_data_urls)}/{len(style_jobs)} styles succeeded"
-            )
-
         ingestion.status = "generated"
         db.commit()
 
-        # ── Upload every generated image to the Meta media API (ordered) ──
         media_ids: List[str] = []
         for data_url in generated_data_urls:
             generated_image_bytes = _data_url_to_bytes(data_url)
             if not generated_image_bytes:
-                logger.error(
-                    f"7-pack delivery: failed to decode image data for ingestion_id={ingestion_id}"
-                )
                 continue
 
             media_id = await upload_media_to_meta(generated_image_bytes)
             if not media_id:
-                logger.error(
-                    f"7-pack delivery: Meta media upload failed for ingestion_id={ingestion_id}"
-                )
                 continue
 
             media_ids.append(media_id)
@@ -1140,9 +1054,6 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_delivery(db, ingestion, "All Meta media uploads failed")
             return False
 
-        # ── Resolve remaining wallet balance for the closing caption ──
-        # Same fuzzy matching as the webhook's _find_customer_safe (leading
-        # '+' / '91' country-code variants must still resolve).
         clean_sender = ingestion.external_user_id.lstrip("+").strip()
         customer = db.query(Customer).filter(
             Customer.whatsapp_id == clean_sender
@@ -1154,11 +1065,11 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         current_balance = customer.wallet_balance if customer else 0
         balance_text = f"₹{current_balance:,}"
 
-        # ── Sequential throttled delivery of the full pack ──
         delivered = await send_7_pack_images_to_whatsapp(
             recipient_id=ingestion.external_user_id,
             image_urls=media_ids,
             balance_text=balance_text,
+            reply_to_message_id=ingestion.external_message_id,
         )
 
         if not delivered:

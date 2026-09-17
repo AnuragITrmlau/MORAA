@@ -1,21 +1,22 @@
 """Meta WhatsApp Cloud API webhook routes.
 
-Implements Scenario 1 (Onboarding & Registration),
-Scenario 2 (Zero-balance Wallet Gate),
-Scenario 3 (Partial Order: e.g. ₹1000 balance for 3 uploaded images),
-Dynamic Custom Recharges (>= ₹500), and AI Quality Guard.
+Strict Concurrency Lock:
+- Only 1 image processes per batch/window.
+- Extra concurrent images immediately receive a quoted recharge warning.
+- No background queue leaks for secondary images.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import json
 import re
-import traceback
+import time
 import httpx
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from app.config import settings
 from app.database import get_db, SessionLocal
@@ -38,22 +39,18 @@ from app.services.meta_whatsapp_service import (
 )
 from app.tasks.whatsapp_generation_tasks import process_whatsapp_7_pack_task
 from app.services.razorpay_service import create_recharge_payment_link
+from app.services.onboarding_service import get_or_create_customer
 from app.services.upload_service import UploadService
 from app.services.wallet_service import get_customer
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 
-# Active and verified permanent payment page link
 DEFAULT_PAYMENT_URL = "https://rzp.io/rzp/FbuLh9je"
 COST_PER_PRODUCT = 500
 
-
-def _ordinal(n: int) -> str:
-    """Helper for 1st, 2nd, 3rd, 4th."""
-    if 11 <= (n % 100) <= 13:
-        return f"{n}th"
-    return f"{n}{['th', 'st', 'nd', 'rd', 'th'][min(n % 10, 4)]}"
+# In-memory concurrency guard to absorb rapid multi-image webhook hits (5 second window)
+_USER_IMAGE_LOCKS: Dict[str, float] = {}
 
 
 def _find_customer_safe(db: Session, sender: str) -> Optional[Customer]:
@@ -63,99 +60,6 @@ def _find_customer_safe(db: Session, sender: str) -> Optional[Customer]:
     if not c and len(clean_sender) >= 10:
         c = db.query(Customer).filter(Customer.whatsapp_id.contains(clean_sender[-10:])).first()
     return c
-
-
-# ─── Background Scenario 3 Delivery Worker ──────────────────────────────
-
-
-async def process_partial_order_batch(
-    sender: str,
-    ingestion_ids: List[str],
-    processed_count: int,
-    unprocessed_count: int,
-) -> None:
-    total_images_in_packs = processed_count * 8
-
-    for idx, ing_id in enumerate(ingestion_ids):
-        is_last = (idx == len(ingestion_ids) - 1)
-        pack_caption = (
-            f"Here are your {total_images_in_packs} images across {processed_count} E-commerce Packs 📦✨\n"
-            f"Remaining balance: ₹0"
-            if is_last else ""
-        )
-        await process_whatsapp_generation(
-            ingestion_id=ing_id,
-            prompt_type="prompt_ecommerce",
-            custom_caption=pack_caption,
-            trigger_feedback=is_last,
-        )
-        await asyncio.sleep(1)
-
-    if unprocessed_count > 0:
-        unprocessed_idx = processed_count + 1
-        ordinal_unprocessed = _ordinal(unprocessed_idx)
-
-        try:
-            recharge_url = await create_recharge_payment_link(
-                customer_phone=sender,
-                customer_name="Customer",
-                amount=500,
-            )
-        except Exception as e:
-            logger.error(f"Failed to generate recharge link in partial order: {e}")
-            recharge_url = DEFAULT_PAYMENT_URL
-
-        reminder_text = (
-            f"To process your {ordinal_unprocessed} image, please make a "
-            f"payment to continue ⚠️"
-        )
-
-        await asyncio.sleep(2)
-        await send_whatsapp_cta_url_button(
-            recipient_id=sender,
-            body_text=reminder_text,
-            button_label="Pay ₹500 to continue",
-            url=recharge_url or DEFAULT_PAYMENT_URL,
-        )
-
-
-def _handle_button_reply(
-    event: Dict[str, Any],
-    db: Session,
-) -> Optional[Tuple[str, str]]:
-    button_reply = event.get("button_reply", {})
-    button_id = button_reply.get("id", "")
-    button_title = button_reply.get("title", "")
-    sender = event.get("sender", "")
-    message_id = event.get("message_id", "")
-
-    if not button_id:
-        return None
-
-    parts = button_id.split(":", 1)
-    if len(parts) != 2:
-        return None
-
-    prompt_type = parts[0]
-    ingestion_id = parts[1]
-
-    if not ingestion_id or prompt_type not in ("prompt_ecommerce", "prompt_close_up", "prompt_ugc"):
-        return None
-
-    try:
-        ingestion_repo = BaseRepository(WhatsAppIngestion, db)
-        existing = ingestion_repo.find_first(id=ingestion_id)
-        if not existing or not existing.image_id:
-            return None
-    except Exception as e:
-        logger.error(f"Button reply ingestion lookup failed: {e}")
-        db.rollback()
-        return None
-
-    return prompt_type, ingestion_id
-
-
-# ─── GET — Webhook Verification ──────────────────────────────────────────
 
 
 @router.get("/webhook", summary="Meta webhook verification")
@@ -179,9 +83,6 @@ async def verify_webhook(
     return PlainTextResponse(content=hub_challenge)
 
 
-# ─── POST — Webhook Event Receiver ───────────────────────────────────────
-
-
 @router.post("/webhook", summary="Receive WhatsApp webhook events")
 async def receive_webhook(
     request: Request,
@@ -189,15 +90,17 @@ async def receive_webhook(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     try:
-        payload = await request.json()
+        raw_body = await request.body()
+        if not raw_body:
+            return {"status": "ignored", "message": "Empty body"}
+        payload = json.loads(raw_body.decode("utf-8"))
     except Exception as e:
-        logger.error(f"Failed to parse webhook JSON payload: {e}")
+        logger.error("Failed to parse webhook JSON payload: {}", e)
         return {"status": "error", "message": "Invalid JSON payload"}
 
     if settings.META_APP_SECRET:
         signature = request.headers.get("X-Hub-Signature-256")
-        raw_body_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')
-        if not verify_webhook_signature(raw_body_bytes, signature):
+        if not verify_webhook_signature(raw_body, signature):
             return {"status": "error", "message": "Invalid signature"}
 
     if payload.get("object") == "whatsapp_business_account" and "entry" not in payload:
@@ -222,14 +125,12 @@ async def receive_webhook(
             if event_type == "status":
                 continue
 
-            # ── Text messages ──
             if event_type == "text":
                 sender = event.get("sender", "")
                 raw_text = event.get("body", "").strip()
                 lower_text = raw_text.lower()
-                logger.info(f"Text message received: sender={sender} text='{raw_text}'")
+                logger.info("Text message received: sender={} text='{}'", sender, raw_text)
 
-                # PRIORITY 1: Registration Form Check (MUST BE CHECKED FIRST)
                 if "name:" in lower_text and ("business" in lower_text or "gst" in lower_text):
                     user_name = "there"
                     biz_name = "Jewelry Business"
@@ -258,26 +159,36 @@ async def receive_webhook(
 
                     clean_sender = sender.lstrip("+").strip()
                     cust = _find_customer_safe(db, sender)
-                    
-                    if not cust:
-                        cust = Customer(
-                            whatsapp_id=clean_sender,
-                            full_name=user_name,
-                            business_name=biz_name,
-                            gst_number=gst_val,
-                            address=addr_val,
-                            wallet_balance=0,
-                            is_registered=True,
-                        )
-                        db.add(cust)
-                    else:
+
+                    if cust is not None:
                         cust.full_name = user_name
                         cust.business_name = biz_name
                         cust.gst_number = gst_val
                         cust.address = addr_val
                         cust.is_registered = True
+                        db.commit()
+                    else:
+                        cust, _created = get_or_create_customer(
+                            db,
+                            clean_sender,
+                            defaults={
+                                "full_name": user_name,
+                                "business_name": biz_name,
+                                "gst_number": gst_val,
+                                "address": addr_val,
+                                "wallet_balance": 0,
+                                "is_registered": True,
+                            },
+                            update_fields=[
+                                "full_name",
+                                "business_name",
+                                "gst_number",
+                                "address",
+                            ],
+                        )
 
-                    db.commit()
+                    if cust is None:
+                        continue
 
                     confirm_msg = (
                         f"Congratulations {user_name}! You’re registered with Moraa Studio 🎉\n"
@@ -290,7 +201,7 @@ async def receive_webhook(
                             amount=500,
                         )
                     except Exception as e:
-                        logger.error(f"Failed to generate registration recharge link: {e}")
+                        logger.error("Failed to generate registration recharge link: {}", e)
                         pay_url = DEFAULT_PAYMENT_URL
 
                     await send_whatsapp_cta_url_button(
@@ -301,11 +212,10 @@ async def receive_webhook(
                     )
                     continue
 
-                # PRIORITY 2: Standalone Greetings (Exact whole words via \b)
                 if re.search(r"\b(hi|hii|hello|hey|start)\b", lower_text):
                     msg_part_1 = (
                         "Hi there! Welcome to Moraa Studio ✨\n"
-                        "We help you turn raw jewelry photos into polished, e-commerce ready images — powered by AI 💎"
+                        "We help you turn raw jewelry photos into polished, e-commerce ready images "
                     )
                     msg_part_2 = (
                         "Let’s get you set up, it only takes a minute!\n\n"
@@ -321,7 +231,6 @@ async def receive_webhook(
                     await send_whatsapp_text(sender, msg_part_2)
                     continue
 
-                # PRIORITY 3: Custom Recharge Command (>= ₹500)
                 recharge_match = re.search(r"\b(?:recharge|pay|add)\s*(?:rs\.?|inr|₹)?\s*(\d+)\b", lower_text)
                 if recharge_match:
                     requested_amount = int(recharge_match.group(1))
@@ -341,7 +250,7 @@ async def receive_webhook(
                             amount=requested_amount,
                         )
                     except Exception as e:
-                        logger.error(f"Failed to generate custom recharge link: {e}")
+                        logger.error("Failed to generate custom recharge link: {}", e)
                         pay_url = DEFAULT_PAYMENT_URL
 
                     await send_whatsapp_cta_url_button(
@@ -354,7 +263,6 @@ async def receive_webhook(
 
                 continue
 
-            # ── Interactive button replies ──
             if event_type == "interactive" and event.get("subtype") == "button_reply":
                 button_reply = event.get("button_reply", {})
                 b_id = button_reply.get("id", "")
@@ -369,20 +277,8 @@ async def receive_webhook(
                     await send_whatsapp_text(recipient_id=sender, message_text=fb_response)
                     continue
 
-                button_selection = _handle_button_reply(event, db)
-                if button_selection:
-                    prompt_type, ingestion_id = button_selection
-                    background_tasks.add_task(
-                        process_whatsapp_generation,
-                        ingestion_id,
-                        prompt_type,
-                    )
                 continue
 
-            if event_type in ("interactive", "unsupported"):
-                continue
-
-            # ── Collect images ──
             if event_type == "image":
                 image_events.append(event)
 
@@ -390,68 +286,70 @@ async def receive_webhook(
         return {"status": "ok", "images_processed": 0}
 
     sender = image_events[0].get("sender", "")
+    clean_sender = sender.lstrip("+").strip()
     customer = _find_customer_safe(db, sender)
-    current_balance = customer.wallet_balance if customer else 0
-    total_images = len(image_events)
+    now = time.time()
 
-    logger.info(f"Image received from {sender}. DB Balance: ₹{current_balance}")
+    # ── CONCURRENCY & BATCH FILTER ──
+    # Check if this sender already triggered an image processing in the last 4 seconds
+    last_processed_time = _USER_IMAGE_LOCKS.get(clean_sender, 0)
+    is_concurrency_blocked = (now - last_processed_time) < 4.0
 
-    # Scenario 2: Zero Balance Wallet Gate
-    if current_balance <= 0:
-        cust_name = getattr(customer, "full_name", "Customer") if customer else "Customer"
-        try:
-            pay_url = await create_recharge_payment_link(
-                customer_phone=sender,
-                customer_name=cust_name,
-                amount=500,
-            )
-        except Exception as e:
-            logger.error(f"Failed to generate zero balance recharge link: {e}")
-            pay_url = DEFAULT_PAYMENT_URL
-
-        zero_balance_msg = (
-            "Your current balance is ₹0 ⚠️\n"
-            "Please make a payment to continue."
-        )
-        await send_whatsapp_cta_url_button(
-            recipient_id=sender,
-            body_text=zero_balance_msg,
-            button_label="Pay ₹500",
-            url=pay_url or DEFAULT_PAYMENT_URL,
-        )
-        return {"status": "held_zero_balance"}
-
-    # Scenario 3: Partial Order Calculation
-    allowed_count = current_balance // COST_PER_PRODUCT
-    is_partial = (total_images > allowed_count and allowed_count > 0)
-
-    if is_partial:
-        unprocessed_idx = allowed_count + 1
-        ordinal_unprocessed = _ordinal(unprocessed_idx)
-
-        msg_partial_breakdown = (
-            f"Your balance is ₹{current_balance:,} — enough for {allowed_count} of "
-            f"these {total_images} images (₹{COST_PER_PRODUCT} each) 💰\n"
-            f"We’ll process {allowed_count} now, and you’ll need to recharge for the {ordinal_unprocessed}."
-        )
-        await send_whatsapp_text(sender, msg_partial_breakdown)
-        await asyncio.sleep(1)
-
-        msg_processing_now = (
-            f"Processing your {allowed_count} images now ✅\n"
-            f"Ready in 2-3 minutes ⏳"
-        )
-        await send_whatsapp_text(sender, msg_processing_now)
-
-    images_to_process = image_events[:allowed_count] if is_partial else image_events
     processed_ingestion_ids: List[str] = []
 
-    for img_ev in images_to_process:
+    for idx, img_ev in enumerate(image_events):
         message_id = img_ev.get("message_id", "")
         media_id = img_ev.get("media_id", "")
         mime_type = img_ev.get("mime_type", "")
         caption = img_ev.get("caption", "")
         timestamp = img_ev.get("timestamp", "")
+
+        # Row update: atomicity check
+        phone_match = clean_sender[-10:] if len(clean_sender) >= 10 else clean_sender
+        
+        # Agar ye concurrency window ke andar doosri/teesri image hai ya idx > 0 hai
+        if is_concurrency_blocked or idx > 0:
+            warning_text = (
+                "⚠️ Your balance is ₹0 for this image.\n\n"
+                "₹500 required to generate photos for this design.\n"
+                f"Tap to recharge: {DEFAULT_PAYMENT_URL}"
+            )
+            # Seedhe quote karke WhatsApp text bhejo (100% delivered)
+            await send_whatsapp_text(
+                recipient_id=sender,
+                message_text=warning_text,
+                reply_to_message_id=message_id,
+            )
+            continue
+
+        # Check & Deduct from DB atomically
+        result = db.execute(
+            update(Customer)
+            .where(
+                Customer.whatsapp_id.contains(phone_match),
+                Customer.wallet_balance >= COST_PER_PRODUCT,
+            )
+            .values(wallet_balance=Customer.wallet_balance - COST_PER_PRODUCT)
+        )
+        db.commit()
+
+        # Balance nahi tha (0 balance)
+        if result.rowcount == 0:
+            warning_text = (
+                "⚠️ Your balance is ₹0 for this image.\n\n"
+                "₹500 required to generate photos for this design.\n"
+                f"Tap to recharge: {DEFAULT_PAYMENT_URL}"
+            )
+            await send_whatsapp_text(
+                recipient_id=sender,
+                message_text=warning_text,
+                reply_to_message_id=message_id,
+            )
+            continue
+
+        # Set concurrency lock: image A ne slot le liya
+        _USER_IMAGE_LOCKS[clean_sender] = now
+        is_concurrency_blocked = True
 
         existing = ingestion_repo.find_first(external_message_id=message_id)
         if existing:
@@ -473,8 +371,15 @@ async def receive_webhook(
         # AI Quality Guard
         ai_valid, tip_msg = await validate_jewelry_image_with_gemini(image_bytes, content_type)
         if not ai_valid:
+            # Refund
+            db.execute(
+                update(Customer)
+                .where(Customer.whatsapp_id.contains(phone_match))
+                .values(wallet_balance=Customer.wallet_balance + COST_PER_PRODUCT)
+            )
+            db.commit()
             reject_text = f"Photo quality check ⚠️\n\n{tip_msg}\n\nPlease snap a new photo and upload again!"
-            await send_whatsapp_text(sender, reject_text)
+            await send_whatsapp_text(sender, reject_text, reply_to_message_id=message_id)
             continue
 
         ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
@@ -499,44 +404,22 @@ async def receive_webhook(
             timestamp=timestamp,
             image_id=upload_result.id,
             file_size=len(image_bytes),
-            status="stored",
+            status="pack_queued",
         )
         db.commit()
-
-        # Deduct wallet per processed item
-        if customer and customer.wallet_balance >= COST_PER_PRODUCT:
-            customer.wallet_balance -= COST_PER_PRODUCT
-            db.commit()
 
         processed_ingestion_ids.append(ingestion.id)
 
-        # ── 7-Pack auto-flow: no manual style selection ──
-        ack_ok = await send_whatsapp_text(sender, CATALOG_PACK_ACK_TEMPLATE)
-        if ack_ok:
-            ingestion.status = "pack_queued"
-        else:
-            ingestion.status = "stored"
-        db.commit()
+        # Quoted ACK strictly on Image A
+        await send_whatsapp_text(sender, CATALOG_PACK_ACK_TEMPLATE, reply_to_message_id=message_id)
 
+        # Trigger generation for Image A only
         process_whatsapp_7_pack_task.delay(ingestion.id)
-
-    if is_partial and processed_ingestion_ids:
-        background_tasks.add_task(
-            process_partial_order_batch,
-            sender=sender,
-            ingestion_ids=processed_ingestion_ids,
-            processed_count=allowed_count,
-            unprocessed_count=total_images - allowed_count,
-        )
 
     return {
         "status": "ok",
         "queued": len(processed_ingestion_ids),
-        "packs_triggered": len(processed_ingestion_ids),
     }
-
-
-# ─── GET — Health Check ──────────────────────────────────────────────────
 
 
 @router.get("/webhook/health", summary="Meta webhook health check")

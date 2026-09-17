@@ -17,7 +17,9 @@ def setup_error_handlers(app: FastAPI) -> None:
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """Handle HTTP exceptions with consistent response format."""
         logger.warning(
-            f"HTTP {exc.status_code}: {exc.detail}",
+            "HTTP {}: {}",
+            exc.status_code,
+            str(exc.detail),
             extra={"category": "api", "path": str(request.url)},
         )
         return JSONResponse(
@@ -40,7 +42,8 @@ def setup_error_handlers(app: FastAPI) -> None:
             errors.append({"field": field, "message": message})
 
         logger.warning(
-            f"Validation error: {errors}",
+            "Validation error: {}",
+            errors,
             extra={"category": "api", "path": str(request.url)},
         )
 
@@ -56,10 +59,10 @@ def setup_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle unhandled exceptions gracefully."""
-        logger.error(
-            f"Unhandled exception: {str(exc)}",
+        logger.opt(exception=exc).error(
+            "Unhandled exception: {}",
+            repr(exc),
             extra={"category": "api", "path": str(request.url)},
-            exc_info=True,
         )
         return JSONResponse(
             status_code=500,
