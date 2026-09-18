@@ -549,34 +549,6 @@ async def send_interactive_cta_button(
     return await _post_message_payload(payload, "interactive CTA button", reply_to_message_id=reply_to_message_id)
 
 
-# ─── Pure-white background knockout (e-commerce path override) ───────────
-
-_ECOMMERCE_WHITE_KNOCKOUT: str = (
-    "BACKGROUND LOCK (NON-NEGOTIABLE OVERRIDE):\n"
-    "Background: 100% flat pure digital white (#FFFFFF, RGB 255, 255, 255) "
-    "across the entire canvas edge-to-edge. Zero grey falloff, zero color "
-    "tint, zero vignette, zero floor seam, zero textured canvas. Pure white "
-    "knockout background. The earring pair is suspended or placed with only "
-    "a crisp subtle contact drop shadow directly underneath.\n"
-    "Lighting: ISOLATED studio lighting — light falls on the earrings only. "
-    "Zero ambient fill, zero bounce light washing the canvas. Lighting "
-    "illuminates the product; it must never tint the background. Shadows "
-    "are limited to a crisp subtle contact drop shadow directly underneath "
-    "the earrings."
-)
-
-
-def _with_white_background_knockout(prompt: str) -> str:
-    """Append the pure-white background knockout to an e-commerce prompt."""
-    if not isinstance(prompt, str):
-        raise TypeError(
-            f"prompt must be a string, got {type(prompt).__name__}"
-        )
-    if _ECOMMERCE_WHITE_KNOCKOUT in prompt:
-        return prompt
-    return f"{prompt}\n\n{_ECOMMERCE_WHITE_KNOCKOUT}"
-
-
 # ─── WhatsApp message send ───────────────────────────────────────────────
 
 
@@ -792,17 +764,13 @@ async def process_whatsapp_generation(
             return False
 
         if prompt_type == "prompt_ecommerce":
-            prompt = _with_white_background_knockout(
-                build_earring_ecommerce_prompt()
-            )
+            prompt = build_earring_ecommerce_prompt()
         elif prompt_type == "prompt_close_up":
             prompt = build_close_up_ears_prompt()
         elif prompt_type == "prompt_ugc":
             prompt = build_ugc_style_prompt()
         else:
-            prompt = _with_white_background_knockout(
-                build_earring_ecommerce_prompt()
-            )
+            prompt = build_earring_ecommerce_prompt()
 
         manager = ImageGenerationManager()
         result = await manager.generate_image(
@@ -949,10 +917,12 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
     from app.services.earring_macro_shot_prompt import build_macro_shot_prompt
     from app.models.customer import Customer
 
+    # Fidelity: every style receives the ORIGINAL, unaltered user photo as
+    # the sole reference. Prompts map directly to the clean per-style prompt
+    # builders — NO synthetic white-knockout wrappers (they caused gemstone
+    # and metal hallucination by overriding the reference image).
     style_prompt_builders = {
-        "prompt_ecommerce": lambda: _with_white_background_knockout(
-            build_earring_ecommerce_prompt()
-        ),
+        "prompt_ecommerce": build_earring_ecommerce_prompt,
         "prompt_close_up": build_close_up_ears_prompt,
         "prompt_scale_reference": build_scale_reference_prompt,
         "prompt_professional": build_professional_shot_prompt,
@@ -1054,16 +1024,14 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_delivery(db, ingestion, "All Meta media uploads failed")
             return False
 
-        clean_sender = ingestion.external_user_id.lstrip("+").strip()
-        customer = db.query(Customer).filter(
-            Customer.whatsapp_id == clean_sender
-        ).first()
-        if not customer and len(clean_sender) >= 10:
-            customer = db.query(Customer).filter(
-                Customer.whatsapp_id.contains(clean_sender[-10:])
-            ).first()
-        current_balance = customer.wallet_balance if customer else 0
-        balance_text = f"₹{current_balance:,}"
+        # Fresh balance read for the 7/7 caption. The ₹500 deduction already
+        # happened UPFRONT in the webhook — this is read-only, never a second
+        # deduction. contains() lookup handles "+91…", "91…" and bare numbers.
+        clean_id = ingestion.external_user_id.lstrip("+").strip()
+        suffix = clean_id[-10:] if len(clean_id) >= 10 else clean_id
+        cust = db.query(Customer).filter(Customer.whatsapp_id.contains(suffix)).first()
+        rem_bal = int(cust.wallet_balance or 0) if cust else 0
+        balance_text = f"₹{rem_bal:,}"
 
         delivered = await send_7_pack_images_to_whatsapp(
             recipient_id=ingestion.external_user_id,

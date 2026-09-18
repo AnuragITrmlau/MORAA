@@ -1,25 +1,23 @@
 """Meta WhatsApp Cloud API webhook routes.
 
-Strict Concurrency Lock:
-- Only 1 image processes per batch/window.
-- Extra concurrent images immediately receive a quoted recharge warning.
-- No background queue leaks for secondary images.
+Funded-slot batch gate:
+- Every image = one ₹500 Earring Catalog Pack (7 styles).
+- slots = wallet_balance // 500 -> exactly that many packs execute.
+- Every unfunded image immediately receives the exact recharge hold message.
+- Funded packs execute via FastAPI BackgroundTasks (no Celery/Redis dependency).
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import json
 import re
-import time
-import httpx
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import update
 
 from app.config import settings
-from app.database import get_db, SessionLocal
+from app.database import get_db
 from app.models.customer import Customer
 from app.models.whatsapp_ingestion import WhatsAppIngestion
 from app.repositories.base import BaseRepository
@@ -29,17 +27,13 @@ from app.services.meta_whatsapp_service import (
     download_media,
     get_media_url,
     parse_webhook_entry,
-    process_whatsapp_generation,
-    send_feedback_buttons,
-    send_prompt_selection_buttons,
+    process_whatsapp_catalog_pack,
     send_whatsapp_cta_url_button,
     send_whatsapp_text,
     validate_image,
     verify_webhook_signature,
 )
-from app.tasks.whatsapp_generation_tasks import process_whatsapp_7_pack_task
 from app.services.razorpay_service import create_recharge_payment_link
-from app.services.onboarding_service import get_or_create_customer
 from app.services.upload_service import UploadService
 from app.services.wallet_service import get_customer
 from app.utils.logger import logger
@@ -49,8 +43,12 @@ router = APIRouter(prefix="/api/meta", tags=["Meta WhatsApp Webhook"])
 DEFAULT_PAYMENT_URL = "https://rzp.io/rzp/FbuLh9je"
 COST_PER_PRODUCT = 500
 
-# In-memory concurrency guard to absorb rapid multi-image webhook hits (5 second window)
-_USER_IMAGE_LOCKS: Dict[str, float] = {}
+# Exact unfunded-image hold message (sent quoted against the user's photo).
+HOLD_MESSAGE_TEMPLATE = (
+    "⚠️ Your balance is ₹0 for this image.\n\n"
+    "₹500 required to generate photos for this design.\n"
+    f"Tap to recharge: {DEFAULT_PAYMENT_URL}"
+)
 
 
 def _find_customer_safe(db: Session, sender: str) -> Optional[Customer]:
@@ -60,6 +58,36 @@ def _find_customer_safe(db: Session, sender: str) -> Optional[Customer]:
     if not c and len(clean_sender) >= 10:
         c = db.query(Customer).filter(Customer.whatsapp_id.contains(clean_sender[-10:])).first()
     return c
+
+
+def _refund_pack_charge(db: Session, customer: Optional[Customer]) -> None:
+    """Refund a single ₹500 pack charge after a post-deduction failure."""
+    if customer is None:
+        return
+    customer.wallet_balance = int(customer.wallet_balance or 0) + COST_PER_PRODUCT
+    db.commit()
+    db.refresh(customer)
+    logger.warning(f"Refunded ₹{COST_PER_PRODUCT} pack charge: whatsapp_id={customer.whatsapp_id}")
+
+
+# ─── Background generation trigger ──────────────────────────────────────
+
+
+async def _trigger_generation(ingestion_id: str) -> None:
+    """Background task that re-runs the 7-style catalog pack for an ingestion.
+
+    Called via BackgroundTasks after successful image ingestion (and by the
+    manual retry endpoint). This keeps the webhook response fast (< 5s) while
+    generation runs async — no Celery/Redis required.
+    """
+    try:
+        success = await process_whatsapp_catalog_pack(ingestion_id)
+        if success:
+            logger.info(f"Background generation completed: ingestion_id={ingestion_id}")
+        else:
+            logger.warning(f"Background generation failed: ingestion_id={ingestion_id}")
+    except Exception as e:
+        logger.error(f"Background generation exception: ingestion_id={ingestion_id} error={e}")
 
 
 @router.get("/webhook", summary="Meta webhook verification")
@@ -168,24 +196,20 @@ async def receive_webhook(
                         cust.is_registered = True
                         db.commit()
                     else:
-                        cust, _created = get_or_create_customer(
-                            db,
-                            clean_sender,
-                            defaults={
-                                "full_name": user_name,
-                                "business_name": biz_name,
-                                "gst_number": gst_val,
-                                "address": addr_val,
-                                "wallet_balance": 0,
-                                "is_registered": True,
-                            },
-                            update_fields=[
-                                "full_name",
-                                "business_name",
-                                "gst_number",
-                                "address",
-                            ],
-                        )
+                        try:
+                            cust = BaseRepository(Customer, db).create(
+                                whatsapp_id=clean_sender,
+                                full_name=user_name,
+                                business_name=biz_name,
+                                gst_number=gst_val,
+                                address=addr_val,
+                                wallet_balance=0,
+                                is_registered=True,
+                            )
+                        except Exception as create_error:
+                            db.rollback()
+                            logger.error(f"Onboarding customer creation failed: {create_error}")
+                            cust = _find_customer_safe(db, sender)
 
                     if cust is None:
                         continue
@@ -286,98 +310,88 @@ async def receive_webhook(
         return {"status": "ok", "images_processed": 0}
 
     sender = image_events[0].get("sender", "")
-    clean_sender = sender.lstrip("+").strip()
-    customer = _find_customer_safe(db, sender)
-    now = time.time()
+    raw_sender = sender.strip()
+    clean_sender = raw_sender.lstrip("+").strip()
+    phone_suffix = clean_sender[-10:] if len(clean_sender) >= 10 else clean_sender
 
-    # ── CONCURRENCY & BATCH FILTER ──
-    # Check if this sender already triggered an image processing in the last 4 seconds
-    last_processed_time = _USER_IMAGE_LOCKS.get(clean_sender, 0)
-    is_concurrency_blocked = (now - last_processed_time) < 4.0
+    # ── FUNDED SLOT GATE ──
+    # Load the customer row ONCE with a clean contains() query (handles
+    # "+91…", "91…" and bare numbers alike), then derive paid slots from the
+    # real balance. Exactly `slots` images execute a full 7-style pack; every
+    # remaining image immediately receives the exact hold message — never a
+    # silent drop.
+    customer = db.query(Customer).filter(Customer.whatsapp_id.contains(phone_suffix)).first()
+    current_bal = int(customer.wallet_balance or 0) if customer else 0
+    slots = current_bal // COST_PER_PRODUCT
 
     processed_ingestion_ids: List[str] = []
 
-    for idx, img_ev in enumerate(image_events):
+    for img_ev in image_events:
         message_id = img_ev.get("message_id", "")
         media_id = img_ev.get("media_id", "")
         mime_type = img_ev.get("mime_type", "")
         caption = img_ev.get("caption", "")
         timestamp = img_ev.get("timestamp", "")
 
-        # Row update: atomicity check
-        phone_match = clean_sender[-10:] if len(clean_sender) >= 10 else clean_sender
-        
-        # Agar ye concurrency window ke andar doosri/teesri image hai ya idx > 0 hai
-        if is_concurrency_blocked or idx > 0:
-            warning_text = (
-                "⚠️ Your balance is ₹0 for this image.\n\n"
-                "₹500 required to generate photos for this design.\n"
-                f"Tap to recharge: {DEFAULT_PAYMENT_URL}"
+        if not media_id:
+            logger.warning(f"Image message missing media_id: message_id={message_id[:20]}...")
+            ingestion_repo.create(
+                external_user_id=sender,
+                external_message_id=message_id,
+                external_media_id="",
+                channel="whatsapp",
+                caption=caption,
+                mime_type=mime_type,
+                timestamp=timestamp,
+                status="failed",
+                error_message="Missing media_id in webhook payload",
             )
-            # Seedhe quote karke WhatsApp text bhejo (100% delivered)
+            db.commit()
+            continue
+
+        if slots <= 0:
+            # Unfunded image — exact hold message, quoted against the photo.
             await send_whatsapp_text(
                 recipient_id=sender,
-                message_text=warning_text,
+                message_text=HOLD_MESSAGE_TEMPLATE,
                 reply_to_message_id=message_id,
             )
             continue
 
-        # Check & Deduct from DB atomically
-        result = db.execute(
-            update(Customer)
-            .where(
-                Customer.whatsapp_id.contains(phone_match),
-                Customer.wallet_balance >= COST_PER_PRODUCT,
-            )
-            .values(wallet_balance=Customer.wallet_balance - COST_PER_PRODUCT)
-        )
-        db.commit()
-
-        # Balance nahi tha (0 balance)
-        if result.rowcount == 0:
-            warning_text = (
-                "⚠️ Your balance is ₹0 for this image.\n\n"
-                "₹500 required to generate photos for this design.\n"
-                f"Tap to recharge: {DEFAULT_PAYMENT_URL}"
-            )
-            await send_whatsapp_text(
-                recipient_id=sender,
-                message_text=warning_text,
-                reply_to_message_id=message_id,
-            )
-            continue
-
-        # Set concurrency lock: image A ne slot le liya
-        _USER_IMAGE_LOCKS[clean_sender] = now
-        is_concurrency_blocked = True
-
+        # Duplicate webhook deliveries must never double-charge or re-queue.
         existing = ingestion_repo.find_first(external_message_id=message_id)
         if existing:
             continue
 
+        # REAL balance deduction — directly on the ORM row, then persist and
+        # re-read so every subsequent iteration (and the 7/7 delivery caption)
+        # sees the true remaining balance. No separate UPDATE statement that
+        # can diverge from the identity-mapped object.
+        customer.wallet_balance = int(customer.wallet_balance or 0) - COST_PER_PRODUCT
+        db.commit()
+        db.refresh(customer)
+        slots -= 1
+
         media_url = await get_media_url(media_id)
         if not media_url:
+            _refund_pack_charge(db, customer)
             continue
 
-        download_result = await download_media(media_url)
+        download_result: Optional[Tuple[bytes, str]] = await download_media(media_url)
         if not download_result:
+            _refund_pack_charge(db, customer)
             continue
 
         image_bytes, content_type = download_result
-        is_valid, _ = validate_image(image_bytes, content_type)
+        is_valid, _validation_error = validate_image(image_bytes, content_type)
         if not is_valid:
+            _refund_pack_charge(db, customer)
             continue
 
-        # AI Quality Guard
+        # AI Quality Guard (Gemini) — reject unusable jewellery photos.
         ai_valid, tip_msg = await validate_jewelry_image_with_gemini(image_bytes, content_type)
         if not ai_valid:
-            # Refund
-            db.execute(
-                update(Customer)
-                .where(Customer.whatsapp_id.contains(phone_match))
-                .values(wallet_balance=Customer.wallet_balance + COST_PER_PRODUCT)
-            )
-            db.commit()
+            _refund_pack_charge(db, customer)
             reject_text = f"Photo quality check ⚠️\n\n{tip_msg}\n\nPlease snap a new photo and upload again!"
             await send_whatsapp_text(sender, reject_text, reply_to_message_id=message_id)
             continue
@@ -387,12 +401,19 @@ async def receive_webhook(
         filename = f"whatsapp_{message_id[:20]}.{ext}"
 
         upload_service = UploadService(db)
-        upload_result = await upload_service.process_upload(
-            file_data=image_bytes,
-            filename=filename,
-            file_size=len(image_bytes),
-            mime_type=content_type,
-        )
+        try:
+            upload_result = await upload_service.process_upload(
+                file_data=image_bytes,
+                filename=filename,
+                file_size=len(image_bytes),
+                mime_type=content_type,
+            )
+        except Exception as upload_error:
+            logger.error(
+                f"WhatsApp upload failed: message_id={message_id[:20]}... error={upload_error}"
+            )
+            _refund_pack_charge(db, customer)
+            continue
 
         ingestion = ingestion_repo.create(
             external_user_id=sender,
@@ -410,15 +431,101 @@ async def receive_webhook(
 
         processed_ingestion_ids.append(ingestion.id)
 
-        # Quoted ACK strictly on Image A
+        # Quoted ACK on the funded image.
         await send_whatsapp_text(sender, CATALOG_PACK_ACK_TEMPLATE, reply_to_message_id=message_id)
 
-        # Trigger generation for Image A only
-        process_whatsapp_7_pack_task.delay(ingestion.id)
+        # Execute the 7-style catalog pack via FastAPI background task (no Celery/Redis).
+        background_tasks.add_task(process_whatsapp_catalog_pack, ingestion.id)
 
     return {
         "status": "ok",
         "queued": len(processed_ingestion_ids),
+    }
+
+
+@router.post(
+    "/webhook/retry/{ingestion_id}",
+    summary="Retry delivery for a failed ingestion",
+    description=(
+        "Manually retry generation/delivery for an ingestion that failed. "
+        "Only works for status 'failed' or 'delivery_failed'. "
+        "Re-runs the 7-style catalog pack and attempts delivery again."
+    ),
+)
+async def retry_delivery(
+    ingestion_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Retry a failed WhatsApp ingestion."""
+    ingestion = db.query(WhatsAppIngestion).filter(
+        WhatsAppIngestion.id == ingestion_id
+    ).first()
+
+    if not ingestion:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ingestion not found: {ingestion_id}",
+        )
+
+    if ingestion.status not in ("failed", "delivery_failed"):
+        return {
+            "status": "error",
+            "message": f"Cannot retry ingestion in status '{ingestion.status}'",
+        }
+
+    # Reset status so the catalog pack will be re-processed.
+    ingestion.status = "stored"
+    ingestion.error_message = None
+    db.commit()
+
+    background_tasks.add_task(_trigger_generation, ingestion.id)
+
+    logger.info(
+        f"Retry triggered: ingestion_id={ingestion_id} "
+        f"user={ingestion.external_user_id}"
+    )
+
+    return {
+        "status": "queued",
+        "message": "Generation retry queued",
+        "ingestion_id": ingestion_id,
+    }
+
+
+# ─── GET — Ingestion Status ─────────────────────────────────────────────
+
+
+@router.get(
+    "/webhook/status/{ingestion_id}",
+    summary="Check ingestion status",
+)
+async def get_ingestion_status(
+    ingestion_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get the current status of a WhatsApp ingestion."""
+    ingestion = db.query(WhatsAppIngestion).filter(
+        WhatsAppIngestion.id == ingestion_id
+    ).first()
+
+    if not ingestion:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ingestion not found: {ingestion_id}",
+        )
+
+    return {
+        "id": ingestion.id,
+        "request_id": ingestion.request_id,
+        "status": ingestion.status,
+        "channel": ingestion.channel,
+        "external_user_id": ingestion.external_user_id,
+        "image_id": ingestion.image_id,
+        "file_size": ingestion.file_size,
+        "error_message": ingestion.error_message,
+        "created_at": str(ingestion.created_at),
+        "updated_at": str(ingestion.updated_at),
     }
 
 

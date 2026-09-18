@@ -74,61 +74,110 @@ def _paise_to_rupees(amount_paise: int) -> int:
     return (amount_paise + PAISE_PER_RUPEE // 2) // PAISE_PER_RUPEE
 
 
+def _as_id(value: Any) -> str:
+    """Coerce a JSON scalar to a clean id string; reject non-scalars."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, (str, int, float)):
+        return str(value).strip()
+    return ""
+
+
+def _extract_sender_id(payment_entity: Dict[str, Any], payment_link_entity: Dict[str, Any]) -> str:
+    """
+    Safely resolve the payer's phone (or id) without ANY KeyError.
+
+    Priority: notes.sender_id -> notes.phone/whatsapp_id/mobile ->
+    contact (Payment Pages) -> customer_id (last resort, e.g. "cust_XXXX").
+    Every access is a guarded ``.get()`` so an unexpected payload shape can
+    never raise.
+    """
+    entities = [e for e in (payment_entity, payment_link_entity) if isinstance(e, dict)]
+
+    # 1. Notes set at link-creation time are the most reliable.
+    for ent in entities:
+        notes = ent.get("notes")
+        if not isinstance(notes, dict):
+            continue
+        for key in ("sender_id", "phone", "whatsapp_id", "mobile"):
+            candidate = str(notes.get(key) or "").strip()
+            if candidate:
+                return candidate
+
+    # 2. Direct contact captured by Payment Pages at checkout.
+    for ent in entities:
+        candidate = str(ent.get("contact") or "").strip()
+        if candidate:
+            return candidate
+
+    # 3. Last resort: customer_id still enables wallet credit + dedupe.
+    for ent in entities:
+        candidate = str(ent.get("customer_id") or "").strip()
+        if candidate:
+            return candidate
+
+    return ""
+
+
 def extract_payment_data(payload: Dict[str, Any]) -> Optional[Tuple[str, int, str]]:
     """
     Safely extract (sender_id, amount_in_rupees, payment_id) without ANY KeyError,
-    supporting both 'payment.captured' (Payment Pages) and 'payment_link.paid' (Dynamic Links).
+    supporting 'payment.captured' (Payment Pages), 'payment_link.paid' (Dynamic
+    Links) and 'order.paid' events.
+
+    Returns ``None`` when the payload carries no usable payment reference;
+    ``sender_id`` may be "" when the payer's phone is absent (the route then
+    reports ``missing_phone``). Never raises — malformed payloads are logged
+    and rejected.
     """
-    payment_entity = _nested_get(payload, "payload", "payment", "entity")
-    payment_link_entity = _nested_get(payload, "payload", "payment_link", "entity")
-
-    if not isinstance(payment_entity, dict) and not isinstance(payment_link_entity, dict):
-        return None
-
-    # Safe extraction of Payment ID
-    payment_id = ""
-    if isinstance(payment_entity, dict):
-        payment_id = payment_entity.get("id") or ""
-    if not payment_id and isinstance(payment_link_entity, dict):
-        payment_id = payment_link_entity.get("id") or ""
-
-    if not payment_id:
-        return None
-
-    # Safe extraction of Amount
-    amount_paise = None
-    if isinstance(payment_entity, dict):
-        amount_paise = payment_entity.get("amount")
-    if amount_paise is None and isinstance(payment_link_entity, dict):
-        amount_paise = payment_link_entity.get("amount")
-
     try:
-        amount_paise = int(amount_paise)
-    except (TypeError, ValueError):
+        if not isinstance(payload, dict):
+            logger.warning("Razorpay webhook payload is not a JSON object")
+            return None
+
+        payment_entity = _nested_get(payload, "payload", "payment", "entity")
+        payment_link_entity = _nested_get(payload, "payload", "payment_link", "entity")
+
+        if not isinstance(payment_entity, dict):
+            payment_entity = {}
+        if not isinstance(payment_link_entity, dict):
+            payment_link_entity = {}
+
+        if not payment_entity and not payment_link_entity:
+            return None
+
+        # Safe extraction of Payment ID (required, must be a scalar).
+        payment_id = _as_id(
+            payment_entity.get("id") or payment_link_entity.get("id")
+        )
+        if not payment_id:
+            logger.warning("Razorpay webhook payload missing payment entity id")
+            return None
+
+        # Safe extraction of Amount (required, in paise).
+        amount_paise_raw = payment_entity.get("amount")
+        if amount_paise_raw is None:
+            amount_paise_raw = payment_link_entity.get("amount")
+
+        try:
+            amount_paise = int(amount_paise_raw)
+        except (TypeError, ValueError):
+            logger.warning("Razorpay webhook payload has a non-numeric amount")
+            return None
+
+        if amount_paise <= 0:
+            return None
+
+        # Safe extraction of Customer Phone / Sender ID (optional).
+        sender_id = _extract_sender_id(payment_entity, payment_link_entity)
+
+        return sender_id, _paise_to_rupees(amount_paise), payment_id
+
+    except Exception as e:
+        # Absolute safety net: payload parsing must never bubble a KeyError
+        # (or anything else) into the middleware as a 500.
+        logger.error(f"Razorpay webhook payload extraction failed unexpectedly: {e}")
         return None
-
-    if amount_paise <= 0:
-        return None
-
-    amount_rupees = _paise_to_rupees(amount_paise)
-
-    # Safe extraction of Customer Phone / Sender ID
-    sender_id = ""
-    # Try notes first
-    for ent in (payment_entity, payment_link_entity):
-        if isinstance(ent, dict):
-            notes = ent.get("notes")
-            if isinstance(notes, dict):
-                candidate = str(notes.get("sender_id") or "").strip()
-                if candidate:
-                    sender_id = candidate
-                    break
-
-    # Fallback to direct contact from payment page submission
-    if not sender_id and isinstance(payment_entity, dict):
-        sender_id = str(payment_entity.get("contact") or "").strip()
-
-    return sender_id, amount_rupees, payment_id
 
 
 def _resolve_customer(db: Session, sender_id: str) -> Optional[Customer]:
@@ -220,6 +269,13 @@ async def razorpay_webhook(
             detail="Invalid JSON payload",
         )
 
+    if not isinstance(payload, dict):
+        logger.error("Razorpay webhook JSON body is not an object")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON payload",
+        )
+
     event = payload.get("event", "")
     logger.info(f"Received Razorpay webhook event: '{event}'")
 
@@ -245,15 +301,25 @@ async def razorpay_webhook(
     customer_name = "Valued Customer"
 
     if customer is None:
+        # gst_number / address are NOT NULL columns populated by the WhatsApp
+        # onboarding flow; a payer who has not onboarded yet gets the same
+        # "N/A" placeholder values that flow uses for unknown fields.
         customer = Customer(
             whatsapp_id=clean_sender,
             full_name="Valued Customer",
             business_name="Jewelry Business",
+            gst_number="N/A",
+            address="N/A",
             wallet_balance=amount_paid,
             is_registered=True,
         )
         db.add(customer)
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Payment webhook: customer creation failed for {clean_sender}: {e}")
+            return {"status": "error", "message": "Customer provisioning failed"}
         db.refresh(customer)
     else:
         credit_wallet(db, customer.whatsapp_id, amount_paid)
