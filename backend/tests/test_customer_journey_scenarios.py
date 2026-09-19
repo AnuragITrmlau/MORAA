@@ -47,12 +47,12 @@ from app.services.onboarding_service import (
     handle_text,
 )
 
-SENDER = "919876543210"
+SENDER = ""
 FULL_REGISTRATION_TEXT = (
-    "Name: Ananya Shah\n"
-    "Business name: Shah Gems & Jewels\n"
-    "GST number: 24AAAPS1234C1Z5\n"
-    "Business address: 12, Diamond Plaza, Varachia Road, Surat, Gujarat 395006"
+    "Name: \n"
+    "Business name: \n"
+    "GST number:\n"
+    "Business address:\n"
 )
 MULTI_PAIR_REJECTION = (
     "This image doesn’t meet our guidelines ❌\n\n"
