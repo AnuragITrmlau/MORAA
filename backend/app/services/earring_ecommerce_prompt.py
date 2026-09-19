@@ -30,18 +30,27 @@ This prompt is designed to:
 4. Support Hoop, Stud, Dangle earring types
 5. Preserve material and colour fidelity
 6. Remove photographic distractions (hand, card, backing, packaging)
-7. Produce clean e-commerce-ready presentation
+7. Produce 100% pure solid white background (#FFFFFF) main e-commerce presentation
 8. Coexist with existing marketplace layers (Amazon India)
 """
 
 from typing import Optional
 
 
-# ─── Earring Type Definitions ─────────────────────────────────────────
-# Each type has specific preservation requirements that the image model
-# must follow.  Adding a new earring type only requires adding a new
-# entry to this dict.
+# ─── Pure White Background Lock (NON-NEGOTIABLE) ──────────────────────
+PURE_WHITE_BACKGROUND_INSTRUCTION = (
+    "BACKGROUND SPECIFICATION — 100% PURE SOLID WHITE (#FFFFFF, RGB 255, 255, 255) (NON-NEGOTIABLE):\n"
+    "• The background must be completely, uniformly, and seamlessly solid pure white (#FFFFFF, RGB 255, 255, 255).\n"
+    "• Amazon India & Global Marketplace Main Listing standard: pure white infinite studio cutout.\n"
+    "• ZERO physical tabletop, zero floor surface, zero marble/stone/wood texture, zero podium, zero pedestal, zero acrylic block.\n"
+    "• ZERO horizon line, zero room corner, zero wall-to-floor transition.\n"
+    "• ZERO dark cast shadows, zero vignette, zero grey edge drop-off, zero ambient gradient.\n"
+    "• The earrings must appear cleanly floating or upright in an infinite, pure white void with ultra-crisp edges.\n"
+    "• Only minimal, natural contact occlusion lighting underneath the jewelry is permitted; the surrounding canvas must remain 100% pristine solid white."
+)
 
+
+# ─── Earring Type Definitions ─────────────────────────────────────────
 EARRING_TYPE_PRESERVATION: dict[str, str] = {
     "Hoop": (
         "EARRING TYPE — HOOP: Preserve the EXACT hoop geometry including "
@@ -76,9 +85,6 @@ GENERIC_EARRING_PRESERVATION = (
 
 
 # ─── Material / Colour Fidelity ───────────────────────────────────────
-# The reference image is the visual source of truth for material appearance.
-# The model must preserve what it sees, not what it thinks looks better.
-
 MATERIAL_FIDELITY_INSTRUCTION = (
     "MATERIAL & COLOUR FIDELITY (NON-NEGOTIABLE):\n"
     "The reference image is the authoritative source for all material "
@@ -102,10 +108,6 @@ MATERIAL_FIDELITY_INSTRUCTION = (
 
 
 # ─── Anti-Symmetry / Anti-Beautification ──────────────────────────────
-# CRITICAL: Based on Phase 4D evidence where OpenAI outputs became
-# significantly more symmetric than references (R1: ~54 → ~94-99,
-# R2: ~64 → ~95-97).  This instruction is designed to prevent that.
-
 ANTI_SYMMETRY_INSTRUCTION = (
     "CRITICAL — ANTI-SYMMETRY & ANTI-BEAUTIFICATION RULE (NON-NEGOTIABLE):\n"
     "The reference image's actual visible asymmetry IS part of the product "
@@ -136,15 +138,13 @@ ANTI_SYMMETRY_INSTRUCTION = (
 
 
 # ─── Input Cleanup ────────────────────────────────────────────────────
-# Remove photographic distractions while preserving jewellery components.
-
 INPUT_CLEANUP_INSTRUCTION = (
     "INPUT CLEANUP (NON-NEGOTIABLE):\n"
     "The reference image may contain photographic distractions that must "
     "be removed from the e-commerce output. Remove:\n"
     "• Human hand, fingers, or body parts holding the earring.\n"
     "• Jewellery display card, backing card, or packaging.\n"
-    "• Surface or table the earring is resting on.\n"
+    "• Surface, counter, or table the earring is resting on.\n"
     "• Background distractions, unrelated objects, clutter.\n"
     "• Shadows cast on the background by the earring or hand.\n"
     "• Inconsistent lighting artefacts.\n"
@@ -166,8 +166,6 @@ INPUT_CLEANUP_INSTRUCTION = (
 
 
 # ─── Angle / View Preservation ────────────────────────────────────────
-# Do not invent a new viewing angle. Preserve the reference's orientation.
-
 ANGLE_PRESERVATION_INSTRUCTION = (
     "ANGLE & VIEW PRESERVATION:\n"
     "Preserve the meaningful visible orientation of the reference wherever "
@@ -182,39 +180,23 @@ ANGLE_PRESERVATION_INSTRUCTION = (
 
 
 # ─── E-Commerce Presentation ──────────────────────────────────────────
-# What the output should look like (presentation-only, not product-identity).
-
 ECOMMERCE_PRESENTATION_INSTRUCTION = (
     "E-COMMERCE PRESENTATION (PRESENTATION ONLY — not product-identity):\n"
-    "Generate a clean, professional e-commerce main image:\n"
-    "• Clean commercial presentation with clear product visibility.\n"
-    "• Product centred appropriately with sufficient margins.\n"
-    "• Sharp product with accurate material rendering — do NOT enhance "
-    "or alter the material appearance.\n"
-    "• Neutral, balanced lighting — no harsh shadows on the product. "
-    "Do NOT apply warm, cool, or coloured lighting that would change "
-    "the perceived product material.\n"
-    "• Reflections must be natural and consistent with the reference — "
-    "do NOT add specular highlights that alter the metal appearance.\n"
-    "• No distracting props, text, logos, watermarks, or overlays.\n"
+    "Generate a professional, high-end e-commerce main catalog image:\n"
+    "• The product is the absolute sole visual focus, set on seamless pure solid white (#FFFFFF).\n"
+    "• Product centered appropriately with comfortable listing margins (occupying ~85% of the frame).\n"
+    "• Sharp, pristine product details with accurate material and metal rendering.\n"
+    "• High-key, bright, balanced commercial studio lighting across the entire piece.\n"
+    "• No reflections of photographers, equipment, or unnatural colored lights.\n"
+    "• No distracting props, stands, acrylic holders, text, watermarks, or overlays.\n"
     "• No packaging, no jewellery card, no display backing.\n"
-    "• The product is the sole visual focus.\n"
-    "• Clean e-commerce presentation suitable for an e-commerce "
-    "product listing.\n"
-    "• Background should be clean and non-distracting.\n"
-    "• Accurate scale — the earring should appear at realistic size "
-    "relative to its actual dimensions.\n"
-    "• CRITICAL: The colour temperature of the output MUST match "
-    "the reference. Silver metals must stay silver. Gold metals must "
-    "stay gold. Do NOT warm or cool the product's natural colour."
+    "• Accurate scale — the earrings should appear at realistic size relative to their actual dimensions.\n"
+    "• The colour temperature of the output MUST match the reference. Silver metals must stay silver. "
+    "Gold metals must stay gold. Do NOT warm or cool the product's natural colour."
 )
 
 
-# ─── Colour Lock (Experimental — Task 3 validated) ──────────────────
-# Evidence: Variant D experiment showed 41% reduction in gold shift
-# when this instruction is included.  Silver→gold colour shift is the
-# highest-priority fidelity failure mode.
-
+# ─── Colour Lock (Task 3 validated) ──────────────────────────────────
 COLOUR_LOCK_INSTRUCTION = (
     "COLOUR LOCK (NON-NEGOTIABLE — HIGHEST PRIORITY):\n"
     "The reference image is the sole authority for the product's actual "
@@ -243,30 +225,19 @@ COLOUR_LOCK_INSTRUCTION = (
 )
 
 
-# ─── Reference Image Priority Marker ──────────────────────────────────
-# This marker tells ImageGenerationManager that REFERENCE_PRIORITY_BLOCK
-# is already covered — preventing double-appendition.
-# The marker MUST start with "REFERENCE IMAGE PRIORITY: MAXIMUM" to match
-# the check in image_generation_manager.py:
-#   if has_reference and "REFERENCE IMAGE PRIORITY" not in prompt.upper():
-
 REFERENCE_PRIORITY_MARKER = "REFERENCE IMAGE PRIORITY: MAXIMUM"
-
-
-# ─── Anti-Redesign Summary ────────────────────────────────────────────
-# A concise anti-redesign instruction that reinforces the above rules.
 
 ANTI_REDESIGN_INSTRUCTION = (
     "ANTI-REDESIGN RULE (NON-NEGOTIABLE):\n"
     "This is a PRODUCT PHOTOGRAPHY task, NOT a design task.\n"
     "You are photographing the EXACT uploaded product in a professional "
-    "studio setting. You are NOT designing a new earring, creating an "
+    "pure white background setting. You are NOT designing a new earring, creating an "
     "inspired variation, or improving a product.\n"
     "The generated image must show the EXACT same product — same shape, "
     "same stones, same metal, same proportions, same craftsmanship, "
     "same asymmetry, same imperfections.\n"
-    "Only the presentation changes: background, lighting, composition, "
-    "and commercial quality."
+    "Only the presentation changes: background to pure solid white #FFFFFF, lighting, composition, "
+    "and commercial marketplace quality."
 )
 
 
@@ -277,25 +248,14 @@ def build_earring_ecommerce_prompt(
 ) -> str:
     """Build the single authoritative earring e-commerce main-image prompt.
 
-    This is the complete prompt that gets sent as the user prompt to
-    /api/generate-image.  The ImageGenerationManager will auto-append
-    REFERENCE_PRIORITY_BLOCK (if reference image present) and marketplace
-    rules (if marketplace specified).
-
-    The prompt includes the REFERENCE IMAGE PRIORITY: MAXIMUM marker to
-    prevent double-appendition of REFERENCE_PRIORITY_BLOCK.
-
-    Args:
-        earring_type: Optional earring type ("Hoop", "Stud", "Dangle").
-            When provided, type-specific preservation rules are included.
-            When None, generic earring preservation rules are used.
-
-    Returns:
-        The complete earring e-commerce main-image prompt string.
+    Enforces 100% pure white (#FFFFFF) background and 1:1 physical identity preservation.
     """
     parts: list[str] = []
 
-    # ── 1:1 Visual Preservation Lock (NON-NEGOTIABLE — highest priority) ─
+    # ── 1. Pure White Background Specification (TOP PRIORITY) ─────────
+    parts.append(PURE_WHITE_BACKGROUND_INSTRUCTION)
+
+    # ── 2. 1:1 Visual Preservation Lock ───────────────────────────────
     parts.append(
         "CRITICAL: The earrings in the output MUST be an exact 1:1 physical "
         "replica of the earrings provided in the reference image. Retain "
@@ -305,30 +265,30 @@ def build_earring_ecommerce_prompt(
         "alternate motifs."
     )
 
-    # ── Input Extraction (remove packaging / distractions) ────────────
+    # ── 3. Input Extraction (remove packaging / table / fingers) ──────
     parts.append(
-        "Remove all retail packaging, polybags, display cards, plastic "
-        "film, and human fingers. Extract the jewelry piece with pristine "
-        "studio fidelity."
+        "Remove all retail packaging, polybags, display cards, plastic film, "
+        "human fingers, and tabletop surfaces. Extract the jewelry piece with pristine "
+        "studio fidelity directly onto pure solid white (#FFFFFF)."
     )
 
-    # ── Header ──────────────────────────────────────────────────
+    # ── 4. Task Header ────────────────────────────────────────────────
     parts.append(
         "TASK: Generate a single e-commerce main image for a Fashion "
-        "Jewellery Earring product. The uploaded reference image is the "
-        "authoritative source of truth for the actual product."
+        "Jewellery Earring product on a seamless pure solid white (#FFFFFF) background. "
+        "The uploaded reference image is the authoritative source of truth for the actual product."
     )
 
-    # ── Reference Priority (prevents backend double-appendition) ──
+    # ── 5. Reference Priority Marker ──────────────────────────────────
     parts.append(REFERENCE_PRIORITY_MARKER)
 
-    # ── Anti-Redesign ───────────────────────────────────────────
+    # ── 6. Anti-Redesign ──────────────────────────────────────────────
     parts.append(ANTI_REDESIGN_INSTRUCTION)
 
-    # ── Anti-Symmetry (CRITICAL — Phase 4D failure mode) ────────
+    # ── 7. Anti-Symmetry ──────────────────────────────────────────────
     parts.append(ANTI_SYMMETRY_INSTRUCTION)
 
-    # ── Product Identity Preservation ───────────────────────────
+    # ── 8. Product Identity Preservation ──────────────────────────────
     parts.append(
         "PRODUCT IDENTITY — PRESERVE EXACTLY:\n"
         "• Overall silhouette and outline shape.\n"
@@ -353,33 +313,33 @@ def build_earring_ecommerce_prompt(
         "hammering, or any other surface treatment as shown."
     )
 
-    # ── Earring Type ────────────────────────────────────────────
+    # ── 9. Earring Type ───────────────────────────────────────────────
     if earring_type and earring_type in EARRING_TYPE_PRESERVATION:
         parts.append(EARRING_TYPE_PRESERVATION[earring_type])
     else:
         parts.append(GENERIC_EARRING_PRESERVATION)
 
-    # ── Material / Colour Fidelity ──────────────────────────────
+    # ── 10. Material / Colour Fidelity ────────────────────────────────
     parts.append(MATERIAL_FIDELITY_INSTRUCTION)
 
-    # ── Colour Lock (Task 3 validated — 41% gold shift reduction) ─
+    # ── 11. Colour Lock ───────────────────────────────────────────────
     parts.append(COLOUR_LOCK_INSTRUCTION)
 
-    # ── Input Cleanup ───────────────────────────────────────────
+    # ── 12. Input Cleanup ─────────────────────────────────────────────
     parts.append(INPUT_CLEANUP_INSTRUCTION)
 
-    # ── Angle Preservation ──────────────────────────────────────
+    # ── 13. Angle Preservation ────────────────────────────────────────
     parts.append(ANGLE_PRESERVATION_INSTRUCTION)
 
-    # ── E-Commerce Presentation ─────────────────────────────────
+    # ── 14. E-Commerce Presentation ───────────────────────────────────
     parts.append(ECOMMERCE_PRESENTATION_INSTRUCTION)
 
-    # ── Output Rule ─────────────────────────────────────────────
+    # ── 15. Final Non-Negotiable Output Rule ──────────────────────────
     parts.append(
-        "OUTPUT RULE:\n"
-        "The earring must appear WITHOUT any jewellery card, display "
-        "backing, packaging, human hand, or non-jewellery elements. "
-        "The earring is the ONLY object in the image."
+        "FINAL OUTPUT RULE:\n"
+        "The earring must appear on a 100% pure solid white background (#FFFFFF, RGB 255, 255, 255) ONLY. "
+        "No tabletop, no surface gradient, no grey vignette, no floor reflection, no display card, "
+        "no human hand. The earring is the ONLY object in the entire image."
     )
 
     return "\n\n".join(parts)
