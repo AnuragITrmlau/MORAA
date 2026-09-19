@@ -30,7 +30,7 @@ META_MEDIA_UPLOAD_URL = "https://graph.facebook.com/v21.0/{phone_number_id}/medi
 
 SUPPORTED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
-# ─── 7-Style Earring Catalog Pack (ordered delivery 1..7) ─────────────────
+# ─── 6-Style Earring Catalog Pack (ordered delivery 1..6) ─────────────────
 CATALOG_PACK_STYLES: List[Tuple[str, str]] = [
     ("Clean E-Commerce", "prompt_ecommerce"),
     ("Close-up on Ear", "prompt_close_up"),
@@ -38,11 +38,10 @@ CATALOG_PACK_STYLES: List[Tuple[str, str]] = [
     ("Professional Studio", "prompt_professional"),
     ("Lifestyle Shot", "prompt_complementary"),
     ("UGC Style", "prompt_ugc"),
-    ("Macro Shot", "prompt_macro"),
 ]
 
 CATALOG_PACK_ACK_TEMPLATE = (
-    "✨ Processing your Earring Catalog Pack (generating all 7 styles)... "
+    "✨ Processing your Earring Catalog Pack (generating all 6 styles)... "
     "Please allow 20-30 seconds."
 )
 
@@ -620,16 +619,16 @@ async def send_document_to_whatsapp(
         return False
 
 
-# ─── 7-Pack catalog delivery ─────────────────────────────────────────────
+# ─── 6-Pack catalog delivery ─────────────────────────────────────────────
 
 
-async def send_7_pack_images_to_whatsapp(
+async def send_6_pack_images_to_whatsapp(
     recipient_id: str,
     image_urls: list,
     balance_text: str,
     reply_to_message_id: Optional[str] = None,
 ) -> bool:
-    """Deliver the complete 7-style Earring Catalog Pack to WhatsApp with contextual quote."""
+    """Deliver the complete 6-style Earring Catalog Pack to WhatsApp with contextual quote."""
     if not recipient_id or not image_urls:
         return False
 
@@ -645,12 +644,12 @@ async def send_7_pack_images_to_whatsapp(
 
         if index == total:
             caption = (
-                f"7/7 {style_title} ✨\n"
-                "Here's your complete 7-style E-commerce Pack 📦\n"
+                f"{index}/{total} {style_title} ✨\n"
+                "Here's your complete 6-style E-commerce Pack 📦\n"
                 f"Remaining balance: {balance_text}"
             )
         else:
-            caption = f"{index}/7 {style_title}"
+            caption = f"{index}/{total} {style_title}"
 
         quote_id = reply_to_message_id if index == 1 else None
 
@@ -663,7 +662,7 @@ async def send_7_pack_images_to_whatsapp(
         if not send_ok:
             all_sent = False
             logger.error(
-                f"7-pack delivery: image {index}/7 failed — "
+                f"6-pack delivery: image {index}/{total} failed — "
                 f"recipient={recipient_id} media_id={media_id}"
             )
 
@@ -671,6 +670,10 @@ async def send_7_pack_images_to_whatsapp(
             await asyncio.sleep(CATALOG_PACK_SEND_THROTTLE_SECONDS)
 
     return all_sent
+
+
+# Backwards-compatibility alias
+send_7_pack_images_to_whatsapp = send_6_pack_images_to_whatsapp
 
 
 # ─── Meta media upload ───────────────────────────────────────────────────
@@ -863,7 +866,7 @@ def _data_url_to_bytes(data_url: str) -> Optional[bytes]:
         return None
 
 
-# ─── 7-Style Catalog Pack generation orchestrator ────────────────────────
+# ─── 6-Style Catalog Pack generation orchestrator ────────────────────────
 
 
 async def _generate_single_pack_style(
@@ -888,7 +891,7 @@ async def _generate_single_pack_style(
 
         if not result.success or not result.image_url:
             logger.error(
-                f"7-pack generation failed for style='{style_title}' "
+                f"Catalog pack generation failed for style='{style_title}' "
                 f"ingestion_id={ingestion_id}: {result.error}"
             )
             return None
@@ -897,14 +900,14 @@ async def _generate_single_pack_style(
 
     except Exception as e:
         logger.error(
-            f"7-pack generation exception for style='{style_title}' "
+            f"Catalog pack generation exception for style='{style_title}' "
             f"ingestion_id={ingestion_id}: {e}"
         )
         return None
 
 
 async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
-    """Generate all 7 catalog styles in parallel and deliver them to WhatsApp."""
+    """Generate all 6 catalog styles in parallel and deliver them to WhatsApp."""
     from app.database import SessionLocal
     from app.models.image import Image
     from app.models.whatsapp_ingestion import WhatsAppIngestion
@@ -914,13 +917,8 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
     from app.services.earring_professional_shot_prompt import build_professional_shot_prompt
     from app.services.earring_complementary_shot_prompt import build_complementary_shot_prompt
     from app.services.earring_ugc_style_prompt import build_ugc_style_prompt
-    from app.services.earring_macro_shot_prompt import build_macro_shot_prompt
     from app.models.customer import Customer
 
-    # Fidelity: every style receives the ORIGINAL, unaltered user photo as
-    # the sole reference. Prompts map directly to the clean per-style prompt
-    # builders — NO synthetic white-knockout wrappers (they caused gemstone
-    # and metal hallucination by overriding the reference image).
     style_prompt_builders = {
         "prompt_ecommerce": build_earring_ecommerce_prompt,
         "prompt_close_up": build_close_up_ears_prompt,
@@ -928,7 +926,6 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         "prompt_professional": build_professional_shot_prompt,
         "prompt_complementary": build_complementary_shot_prompt,
         "prompt_ugc": build_ugc_style_prompt,
-        "prompt_macro": build_macro_shot_prompt,
     }
 
     db = SessionLocal()
@@ -938,12 +935,12 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         ).first()
 
         if not ingestion:
-            logger.error(f"7-pack generation: ingestion not found: {ingestion_id}")
+            logger.error(f"Catalog pack generation: ingestion not found: {ingestion_id}")
             return False
 
         if ingestion.status == "processing":
             logger.info(
-                f"7-pack generation: skipping ingestion {ingestion_id} — already in progress"
+                f"Catalog pack generation: skipping ingestion {ingestion_id} — already in progress"
             )
             return False
 
@@ -979,7 +976,7 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             return False
 
         logger.info(
-            f"7-pack generation started: ingestion_id={ingestion_id} "
+            f"6-pack generation started: ingestion_id={ingestion_id} "
             f"styles={len(style_jobs)}"
         )
 
@@ -1002,7 +999,7 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         ]
 
         if not generated_data_urls:
-            _fail_ingestion(db, ingestion, "All 7 catalog style generations failed")
+            _fail_ingestion(db, ingestion, "All 6 catalog style generations failed")
             return False
 
         ingestion.status = "generated"
@@ -1024,16 +1021,13 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
             _fail_delivery(db, ingestion, "All Meta media uploads failed")
             return False
 
-        # Fresh balance read for the 7/7 caption. The ₹500 deduction already
-        # happened UPFRONT in the webhook — this is read-only, never a second
-        # deduction. contains() lookup handles "+91…", "91…" and bare numbers.
         clean_id = ingestion.external_user_id.lstrip("+").strip()
         suffix = clean_id[-10:] if len(clean_id) >= 10 else clean_id
         cust = db.query(Customer).filter(Customer.whatsapp_id.contains(suffix)).first()
         rem_bal = int(cust.wallet_balance or 0) if cust else 0
         balance_text = f"₹{rem_bal:,}"
 
-        delivered = await send_7_pack_images_to_whatsapp(
+        delivered = await send_6_pack_images_to_whatsapp(
             recipient_id=ingestion.external_user_id,
             image_urls=media_ids,
             balance_text=balance_text,
@@ -1041,7 +1035,7 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         )
 
         if not delivered:
-            _fail_delivery(db, ingestion, "7-pack Meta message delivery failed")
+            _fail_delivery(db, ingestion, "6-pack Meta message delivery failed")
             return False
 
         ingestion.status = "delivered"
@@ -1049,13 +1043,13 @@ async def process_whatsapp_catalog_pack(ingestion_id: str) -> bool:
         db.commit()
 
         logger.info(
-            f"7-pack delivered: ingestion_id={ingestion_id} images={len(media_ids)} "
+            f"6-pack delivered: ingestion_id={ingestion_id} images={len(media_ids)} "
             f"recipient={ingestion.external_user_id}"
         )
         return True
 
     except Exception as e:
-        logger.error(f"7-pack generation exception: ingestion_id={ingestion_id} error={e}")
+        logger.error(f"Catalog pack generation exception: ingestion_id={ingestion_id} error={e}")
         return False
     finally:
         db.close()
